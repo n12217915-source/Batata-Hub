@@ -1,7 +1,3 @@
---// ============================================================
---// BATATA HUB — Serviços, Pastas e Constantes
---// ============================================================
-
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -10,7 +6,6 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local SoundService = game:GetService("SoundService")
 local Debris = game:GetService("Debris")
 local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -20,17 +15,17 @@ if old then old:Destroy() end
 local oldApi = ReplicatedStorage:FindFirstChild("BatataHub_RegisterTab")
 if oldApi then oldApi:Destroy() end
 
---// PASTAS
 local CONFIG_FOLDER = "Batata Central"
 local PLUGINS_FOLDER = CONFIG_FOLDER .. "/Plugins"
 local CONFIG_FILE = CONFIG_FOLDER .. "/hub.json"
-local BACKUP_FOLDER = CONFIG_FOLDER .. "/Backups"
 
-if not isfolder(CONFIG_FOLDER) then makefolder(CONFIG_FOLDER) end
-if not isfolder(PLUGINS_FOLDER) then makefolder(PLUGINS_FOLDER) end
-if not isfolder(BACKUP_FOLDER) then makefolder(BACKUP_FOLDER) end
+pcall(function()
+	if not isfolder(CONFIG_FOLDER) then makefolder(CONFIG_FOLDER) end
+	if not isfolder(PLUGINS_FOLDER) then makefolder(PLUGINS_FOLDER) end
+end)
 
---// PONTO G
+local HAS_FS = (type(isfolder) == "function") and (type(writefile) == "function") and (type(readfile) == "function")
+
 local ACCENT = Color3.fromRGB(255, 200, 20)
 local ACCENT_DARK = Color3.fromRGB(150, 105, 0)
 local BLACK = Color3.fromRGB(10, 10, 10)
@@ -53,13 +48,8 @@ local CONFIG = {
 	OmegaDeviceIconId   = 96858175598695,
 	PortalAppearSoundId = "rbxassetid://104121542162714",
 	RickAppearSoundId   = "rbxassetid://135042210759082",
-
-	-- Sistema de auto-update do hub
-	HubVersion = "2.0.0",
-	HubSourceUrl = "",
 }
 
---// SOM DE CLIQUE
 local clickSound = Instance.new("Sound")
 clickSound.Name = "BatataClick"
 clickSound.SoundId = CONFIG.ClickSoundId
@@ -78,7 +68,6 @@ local function playSound(id, volume)
 	Debris:AddItem(s, 5)
 end
 
---// HELPERS GERAIS
 local function tweenAsync(instance, info, props)
 	local tw = TweenService:Create(instance, info, props)
 	tw:Play()
@@ -94,220 +83,98 @@ local function addHover(button, baseColor, hoverColor)
 		TweenService:Create(button, TweenInfo.new(0.12, Enum.EasingStyle.Sine), {BackgroundColor3 = baseColor}):Play()
 	end)
 end
-
---// TEMA (novo sistema)
-local Theme = {
-	ACCENT = ACCENT,
-	PANEL = PANEL,
-	CARD = CARD,
-	TEXT = TEXT,
-	SUBTEXT = SUBTEXT,
-	BLACK = BLACK,
-}
-
-local function applyTheme(newTheme)
-	for k, v in pairs(newTheme) do
-		if Theme[k] then Theme[k] = v end
-	end
-end
---// ============================================================
---// BATATA HUB — Save/Load com Backups Automáticos
---// ============================================================
-
 local Save = {}
 
 local DEFAULT_SAVE = {
-	version = "2.0.0",
 	lastTab = nil,
 	backgroundId = nil,
-	musicId = nil,
-	musicVolume = 0.5,
-	musicLoop = true,
-	plugins = {},
-	settings = {
-		notifications = true,
-		autoBackup = true,
-		reduceMotion = false,
-		soundEnabled = true,
-	},
-	stats = {
-		installCount = 0,
-		firstInstall = os.time(),
-		lastOpen = os.time(),
-	},
+	plugins = {}, -- { [pluginId] = { name, iconId, installDate } }
 }
 
 local function readSave()
-	if isfile(CONFIG_FILE) then
-		local ok, decoded = pcall(function()
-			return HttpService:JSONDecode(readfile(CONFIG_FILE))
-		end)
-		if ok and type(decoded) == "table" then
-			for k, v in pairs(DEFAULT_SAVE) do
-				if decoded[k] == nil then decoded[k] = v end
-			end
-			for k, v in pairs(DEFAULT_SAVE.settings) do
-				if decoded.settings[k] == nil then decoded.settings[k] = v end
-			end
-			if type(decoded.plugins) ~= "table" then decoded.plugins = {} end
-			if type(decoded.stats) ~= "table" then decoded.stats = DEFAULT_SAVE.stats end
-			return decoded
-		end
+	if not HAS_FS then
+		return HttpService:JSONDecode(HttpService:JSONEncode(DEFAULT_SAVE))
 	end
-
-	local fresh = HttpService:JSONDecode(HttpService:JSONEncode(DEFAULT_SAVE))
-	fresh.stats.installCount = 1
-	fresh.stats.firstInstall = os.time()
-	return fresh
+	local ok, decoded = pcall(function()
+		if isfile(CONFIG_FILE) then
+			return HttpService:JSONDecode(readfile(CONFIG_FILE))
+		end
+	end)
+	if ok and type(decoded) == "table" then
+		if type(decoded.plugins) ~= "table" then decoded.plugins = {} end
+		return decoded
+	end
+	return HttpService:JSONDecode(HttpService:JSONEncode(DEFAULT_SAVE))
 end
 
 Save.data = readSave()
-Save.data.stats.lastOpen = os.time()
-Save.data.stats.installCount = (Save.data.stats.installCount or 0) + 1
 
 local function writeSave()
+	if not HAS_FS then return end
 	pcall(function()
 		writefile(CONFIG_FILE, HttpService:JSONEncode(Save.data))
 	end)
 end
 Save.write = writeSave
 
---// BACKUP AUTOMÁTICO (novo)
-local function createBackup()
-	if not Save.data.settings.autoBackup then return end
-	pcall(function()
-		local timestamp = os.date("%Y-%m-%d_%H-%M-%S")
-		local backupPath = BACKUP_FOLDER .. "/hub_" .. timestamp .. ".json"
-		writefile(backupPath, HttpService:JSONEncode(Save.data))
+-- SISTEMA DE PLUGINS
+local function pluginPath(id) return PLUGINS_FOLDER .. "/" .. id .. ".lua" end
 
-		-- Mantém apenas os 5 backups mais recentes
-		local files = listfiles(BACKUP_FOLDER)
-		table.sort(files)
-		while #files > 5 do
-			delfile(files[1])
-			table.remove(files, 1)
+local function pluginExists(id)
+	if not HAS_FS then return false end
+	local ok, exists = pcall(isfile, pluginPath(id))
+	return ok and exists
+end
+
+local function savePlugin(id, src)
+	if not HAS_FS then return end
+	pcall(function() writefile(pluginPath(id), src) end)
+end
+
+local function loadPlugin(id)
+	if not HAS_FS then return nil end
+	local ok, src = pcall(function()
+		if isfile(pluginPath(id)) then
+			return readfile(pluginPath(id))
 		end
 	end)
-end
-
---// AUTO-SAVE a cada 60 segundos
-task.spawn(function()
-	while task.wait(60) do
-		writeSave()
-	end
-end)
-
---// BACKUP ao sair (última oportunidade)
-game:BindToClose(function()
-	writeSave()
-	createBackup()
-end)
---// ============================================================
---// BATATA HUB — Sistema de Plugins com ID Único
---// ============================================================
-
-local function pluginPath(pluginId)
-	return PLUGINS_FOLDER .. "/" .. pluginId .. ".lua"
-end
-
-local function pluginExists(pluginId)
-	return isfile(pluginPath(pluginId))
-end
-
-local function savePlugin(pluginId, source)
-	pcall(function()
-		writefile(pluginPath(pluginId), source)
-	end)
-end
-
-local function loadPlugin(pluginId)
-	local path = pluginPath(pluginId)
-	if not isfile(path) then return nil end
-	local ok, src = pcall(function()
-		return readfile(path)
-	end)
-	if ok and src and #src > 0 then
-		return src
-	end
+	if ok and src and #src > 0 then return src end
 	return nil
 end
 
-local function deletePlugin(pluginId)
+local function deletePlugin(id)
+	if not HAS_FS then return end
 	pcall(function()
-		if isfile(pluginPath(pluginId)) then
-			delfile(pluginPath(pluginId))
+		if isfile(pluginPath(id)) then
+			delfile(pluginPath(id))
 		end
 	end)
 end
 
--- Lista todos os plugins salvos
-local function listPlugins()
-	local list = {}
-	for pluginId, info in pairs(Save.data.plugins) do
-		if type(info) == "table" then
-			table.insert(list, {
-				pluginId = pluginId,
-				name = info.name or pluginId,
-				iconId = info.iconId,
-				installDate = info.installDate,
-			})
-		end
-	end
-	table.sort(list, function(a, b) return a.name < b.name end)
-	return list
-end
-
--- Serialização
 local function funcToString(fn)
 	local ok, s = pcall(string.dump, fn)
-	if ok and s then return s end
-	return nil
+	return (ok and s) or nil
 end
 
 local function stringToFunc(src)
-	local fn, err = loadstring(src)
-	if not fn then return nil, err end
+	local fn = loadstring(src)
 	return fn
 end
 
---// EXPORTAR/IMPORTAR plugins (novo)
-local function exportPlugin(pluginId)
-	local src = loadPlugin(pluginId)
-	if not src then return nil end
-	local info = Save.data.plugins[pluginId] or {}
-	return HttpService:JSONEncode({
-		pluginId = pluginId,
-		name = info.name,
-		iconId = info.iconId,
-		source = src,
-	})
-end
-
-local function importPlugin(jsonString)
-	local ok, decoded = pcall(function()
-		return HttpService:JSONDecode(jsonString)
-	end)
-	if not ok or type(decoded) ~= "table" then return false, "JSON inválido" end
-	if not decoded.pluginId or not decoded.source then return false, "Dados incompletos" end
-
-	if pluginExists(decoded.pluginId) then
-		return false, "Plugin já existe"
+local function listPlugins()
+	local list = {}
+	for id, info in pairs(Save.data.plugins or {}) do
+		if type(info) == "table" then
+			table.insert(list, {
+				pluginId = id,
+				name = info.name or id,
+				iconId = info.iconId,
+			})
+		end
 	end
-
-	savePlugin(decoded.pluginId, decoded.source)
-	Save.data.plugins[decoded.pluginId] = {
-		name = decoded.name or decoded.pluginId,
-		iconId = decoded.iconId,
-		installDate = os.time(),
-	}
-	writeSave()
-
-	return true
+	table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
+	return list
 end
---// ============================================================
---// BATATA HUB — Sistema de Notificações
---// ============================================================
-
 local gui = Instance.new("ScreenGui")
 gui.Name = "BatataHub"
 gui.ResetOnSpawn = false
@@ -318,17 +185,11 @@ gui.Parent = playerGui
 local notifIndex = 0
 
 local function notify(text, kind, duration)
-	if not Save.data.settings.notifications then return end
 	duration = duration or 3
-
 	local accent = ACCENT
-	if kind == "error" then
-		accent = Color3.fromRGB(220, 90, 90)
-	elseif kind == "success" then
-		accent = Color3.fromRGB(120, 220, 150)
-	elseif kind == "warn" then
-		accent = Color3.fromRGB(255, 180, 80)
-	end
+	if kind == "error" then accent = Color3.fromRGB(220, 90, 90)
+	elseif kind == "success" then accent = Color3.fromRGB(120, 220, 150)
+	elseif kind == "warn" then accent = Color3.fromRGB(255, 180, 80) end
 
 	notifIndex = notifIndex + 1
 	local slot = notifIndex
@@ -385,10 +246,7 @@ local function notify(text, kind, duration)
 	end)
 end
 
--- Expor globalmente
-_G.BatataNotify = notify
-
---// BOTÃO FLUTUANTE
+-- Botão flutuante
 local floating = Instance.new("ImageButton")
 floating.Name = "BatataButton"
 floating.Size = UDim2.fromOffset(BUTTON_SIZE, BUTTON_SIZE)
@@ -412,14 +270,10 @@ floatingScale.Parent = floating
 
 task.spawn(function()
 	while floating.Parent do
-		if not Save.data.settings.reduceMotion then
-			TweenService:Create(floatingStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 2}):Play()
-			task.wait(1.3)
-			TweenService:Create(floatingStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 0}):Play()
-			task.wait(1.3)
-		else
-			task.wait(2)
-		end
+		TweenService:Create(floatingStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 2}):Play()
+		task.wait(1.3)
+		TweenService:Create(floatingStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 0}):Play()
+		task.wait(1.3)
 	end
 end)
 
@@ -429,10 +283,6 @@ local function pulseButton()
 	down:Play()
 	down.Completed:Connect(function() up:Play() end)
 end
---// ============================================================
---// BATATA HUB — Painel, Header e Estrutura
---// ============================================================
-
 local panel = Instance.new("Frame")
 panel.Name = "Main"
 panel.Size = PANEL_CLOSED
@@ -461,7 +311,7 @@ panelStroke.Transparency = 1
 
 task.spawn(function()
 	while panel.Parent do
-		if panel.Visible and not Save.data.settings.reduceMotion then
+		if panel.Visible then
 			TweenService:Create(panelStroke, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 1.8}):Play()
 			task.wait(1.6)
 			TweenService:Create(panelStroke, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 1.2}):Play()
@@ -513,7 +363,10 @@ avatar.BackgroundColor3 = CARD
 avatar.ZIndex = 12
 avatar.Parent = header
 Instance.new("UICorner", avatar).CornerRadius = UDim.new(1, 0)
-Instance.new("UIStroke", avatar).Color = ACCENT
+
+local avatarStroke = Instance.new("UIStroke", avatar)
+avatarStroke.Color = ACCENT
+avatarStroke.Thickness = 1
 
 task.spawn(function()
 	local ok, image = pcall(function()
@@ -574,7 +427,7 @@ close.Parent = header
 Instance.new("UICorner", close).CornerRadius = UDim.new(0, 5)
 addHover(close, CARD, Color3.fromRGB(60, 30, 30))
 
--- Tabs container
+-- Tabs e Content
 local tabs = Instance.new("Frame")
 tabs.Name = "Tabs"
 tabs.Size = UDim2.new(1, -14, 0, 22)
@@ -589,7 +442,6 @@ tabLayout.Padding = UDim.new(0, 5)
 tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 tabLayout.Parent = tabs
 
--- Content
 local content = Instance.new("Frame")
 content.Name = "Content"
 content.Size = UDim2.new(1, -14, 1, -68)
@@ -599,26 +451,10 @@ content.BorderSizePixel = 0
 content.ZIndex = 11
 content.Parent = panel
 Instance.new("UICorner", content).CornerRadius = UDim.new(0, 6)
-
--- Toast de status (novo)
-local statusBar = Instance.new("TextLabel")
-statusBar.BackgroundTransparency = 1
-statusBar.Size = UDim2.new(1, -20, 0, 12)
-statusBar.Position = UDim2.new(0, 10, 1, -16)
-statusBar.Font = Enum.Font.Gotham
-statusBar.Text = "v" .. CONFIG.HubVersion .. " | " .. #listPlugins() .. " plugins"
-statusBar.TextSize = 8
-statusBar.TextColor3 = SUBTEXT
-statusBar.TextXAlignment = Enum.TextXAlignment.Left
-statusBar.ZIndex = 12
-statusBar.Parent = panel
---// ============================================================
---// BATATA HUB — Sistema de Abas
---// ============================================================
-
 local activePage = nil
 local tabButtons = {}
 local TabRegistry = {}
+local settingsOpen = false
 
 local ctx = {
 	player = player,
@@ -652,7 +488,7 @@ local function createPage()
 	return page
 end
 
-local function createTab(name, iconId, pluginId)
+local function createTab(name, iconId)
 	local button = Instance.new("TextButton")
 	button.Size = UDim2.fromOffset(iconId and 74 or 62, 22)
 	button.BackgroundColor3 = CARD
@@ -660,7 +496,6 @@ local function createTab(name, iconId, pluginId)
 	button.AutoButtonColor = false
 	button.ZIndex = 12
 	button.Parent = tabs
-	button.Name = "tab_" .. (pluginId or name)
 
 	Instance.new("UICorner", button).CornerRadius = UDim.new(0, 5)
 
@@ -698,16 +533,18 @@ local function createTab(name, iconId, pluginId)
 
 	TweenService:Create(btnScale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
 
-	tabButtons[pluginId or name] = {Button = button, Label = label}
+	tabButtons[name] = {Button = button, Label = label}
 	return button
 end
 
-local function selectTab(pluginId, silent)
-	local entry = TabRegistry[pluginId]
-	if not entry then return end
+local function selectTab(name)
+	local buildFn = TabRegistry[name]
+	if not buildFn then return end
 
-	for id, data in pairs(tabButtons) do
-		if id == pluginId then
+	settingsOpen = false
+
+	for tabName, data in pairs(tabButtons) do
+		if tabName == name then
 			TweenService:Create(data.Button, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {BackgroundColor3 = ACCENT}):Play()
 			TweenService:Create(data.Label, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {TextColor3 = BLACK}):Play()
 		else
@@ -717,100 +554,14 @@ local function selectTab(pluginId, silent)
 	end
 
 	local page = createPage()
-	entry.buildFn(page, ctx)
+	buildFn(page, ctx)
 
-	if not silent then
-		Save.data.lastTab = pluginId
-		writeSave()
-	end
-end
-
-local function registerTab(pluginId, name, buildFn, iconId, silent, sourceCode)
-	if TabRegistry[pluginId] then
-		TabRegistry[pluginId].buildFn = buildFn
-		return
-	end
-
-	TabRegistry[pluginId] = { name = name, buildFn = buildFn, iconId = iconId }
-
-	local btn = createTab(name, iconId, pluginId)
-	btn.Activated:Connect(function()
-		playClick()
-		selectTab(pluginId)
-	end)
-	addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
-
-	if sourceCode and not silent then
-		savePlugin(pluginId, sourceCode)
-	end
-
-	if not silent then
-		Save.data.plugins[pluginId] = {
-			name = name,
-			iconId = iconId,
-			installDate = os.time(),
-		}
-		writeSave()
-
-		-- Atualiza status bar
-		statusBar.Text = "v" .. CONFIG.HubVersion .. " | " .. #listPlugins() .. " plugins"
-	end
-end
---// ============================================================
---// BATATA HUB — Registro Externo e HOME
---// ============================================================
-
-local function RegisterExternalTab(password, tabData)
-	if password ~= CONFIG.ExternalPassword then
-		notify("Senha inválida para registro.", "error")
-		return false, "Senha inválida"
-	end
-
-	if type(tabData) ~= "table"
-		or type(tabData.Name) ~= "string"
-		or type(tabData.BuildContent) ~= "function" then
-		notify("Dados do plugin inválidos.", "error")
-		return false, "Dados inválidos"
-	end
-
-	local pluginId = tabData.PluginId or tabData.Name
-	if type(pluginId) ~= "string" then
-		notify("PluginId inválido.", "error")
-		return false, "PluginId inválido"
-	end
-
-	if TabRegistry[pluginId] then
-		notify("Você já tem esse plugin!", "error")
-		return false, "Plugin já ativo"
-	end
-
-	if pluginExists(pluginId) then
-		notify("Você já tem esse plugin salvo!", "error")
-		return false, "Plugin já existe"
-	end
-
-	local source = funcToString(tabData.BuildContent)
-	if not source then
-		notify("Falha na serialização.", "error")
-		return false, "Sem source"
-	end
-
-	registerTab(pluginId, tabData.Name, tabData.BuildContent, tabData.IconId, false, source)
-
-	notify("Plugin instalado: " .. tabData.Name, "success")
-	print("[BatataHub] Plugin registrado:", pluginId, "| Ícone:", tabData.IconId or "nenhum")
-	return true
-end
-
-local api = Instance.new("BindableFunction")
-api.Name = "BatataHub_RegisterTab"
-api.Parent = ReplicatedStorage
-api.OnInvoke = function(password, tabData)
-	return RegisterExternalTab(password, tabData)
+	Save.data.lastTab = name
+	Save.write()
 end
 
 -- Aba HOME
-local function buildHome(page, ctx)
+TabRegistry["HOME"] = function(page, ctx)
 	local welcome = Instance.new("TextLabel")
 	welcome.BackgroundTransparency = 1
 	welcome.Position = UDim2.fromOffset(9, 8)
@@ -827,7 +578,7 @@ local function buildHome(page, ctx)
 	description.Position = UDim2.fromOffset(9, 26)
 	description.Size = UDim2.new(1, -19, 0, 16)
 	description.Font = Enum.Font.Gotham
-	description.Text = "Bem-vindo ao Batata Hub v" .. CONFIG.HubVersion
+	description.Text = "Bem-vindo ao Batata Hub."
 	description.TextSize = 9
 	description.TextColor3 = ctx.colors.SUBTEXT
 	description.TextXAlignment = Enum.TextXAlignment.Left
@@ -891,54 +642,6 @@ local function buildHome(page, ctx)
 	friendValue.TextXAlignment = Enum.TextXAlignment.Left
 	friendValue.Parent = friendCard
 
-	-- Botões rápidos (novo)
-	local rejoinBtn = Instance.new("TextButton")
-	rejoinBtn.Size = UDim2.new(0.48, 0, 0, 22)
-	rejoinBtn.Position = UDim2.new(0, 9, 0, 105)
-	rejoinBtn.BackgroundColor3 = ctx.colors.CARD
-	rejoinBtn.Text = "🔄 Reentrar"
-	rejoinBtn.Font = Enum.Font.GothamBold
-	rejoinBtn.TextSize = 9
-	rejoinBtn.TextColor3 = ctx.colors.TEXT
-	rejoinBtn.AutoButtonColor = false
-	rejoinBtn.Parent = page
-	Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 5)
-
-	local serverHopBtn = Instance.new("TextButton")
-	serverHopBtn.Size = UDim2.new(0.48, 0, 0, 22)
-	serverHopBtn.Position = UDim2.new(0.52, 0, 0, 105)
-	serverHopBtn.BackgroundColor3 = ctx.colors.CARD
-	serverHopBtn.Text = "🌐 Novo Servidor"
-	serverHopBtn.Font = Enum.Font.GothamBold
-	serverHopBtn.TextSize = 9
-	serverHopBtn.TextColor3 = ctx.colors.TEXT
-	serverHopBtn.AutoButtonColor = false
-	serverHopBtn.Parent = page
-	Instance.new("UICorner", serverHopBtn).CornerRadius = UDim.new(0, 5)
-
-	rejoinBtn.Activated:Connect(function()
-		playClick()
-		TeleportService:Teleport(game.PlaceId, player)
-	end)
-
-	serverHopBtn.Activated:Connect(function()
-		playClick()
-		local ok, servers = pcall(function()
-			return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"))
-		end)
-		if ok and servers and servers.data then
-			for _, srv in ipairs(servers.data) do
-				if srv.id ~= game.JobId and srv.playing < srv.maxPlayers then
-					TeleportService:TeleportToPlaceInstance(game.PlaceId, srv.id, player)
-					return
-				end
-			end
-			notify("Nenhum servidor disponível.", "warn")
-		else
-			notify("Erro ao buscar servidores.", "error")
-		end
-	end)
-
 	task.spawn(function()
 		while page.Parent do
 			local start = os.clock()
@@ -952,47 +655,62 @@ local function buildHome(page, ctx)
 	end)
 end
 
-registerTab("HOME", "HOME", buildHome, nil, true, nil)
---// ============================================================
---// BATATA HUB — Painel de Configurações
---// ============================================================
+local homeButton = createTab("HOME")
+homeButton.Activated:Connect(function() playClick(); selectTab("HOME") end)
+addHover(homeButton, CARD, Color3.fromRGB(38, 38, 38))
+selectTab("HOME")
+local function RegisterExternalTab(password, tabData)
+	if password ~= CONFIG.ExternalPassword then
+		notify("Senha inválida.", "error")
+		return false, "Senha inválida"
+	end
+	if type(tabData) ~= "table" or type(tabData.Name) ~= "string" or type(tabData.BuildContent) ~= "function" then
+		notify("Dados inválidos.", "error")
+		return false, "Dados inválidos"
+	end
 
-local settingsOpen = false
-local musicState = {
-	Playing = false,
-	SoundId = Save.data.musicId or nil,
-	Volume = Save.data.musicVolume or 0.5,
-	Loop = Save.data.musicLoop ~= false,
-}
-local musicPlayer = nil
+	local pluginId = tabData.PluginId or tabData.Name
+	if TabRegistry[pluginId] then
+		notify("Você já tem esse plugin!", "error")
+		return false, "Já ativo"
+	end
+	if pluginExists(pluginId) then
+		notify("Você já tem esse plugin salvo!", "error")
+		return false, "Já salvo"
+	end
 
-if musicState.SoundId then
-	musicPlayer = Instance.new("Sound")
-	musicPlayer.SoundId = "rbxassetid://" .. tostring(musicState.SoundId)
-	musicPlayer.Volume = musicState.Volume
-	musicPlayer.Looped = musicState.Loop
-	musicPlayer.Parent = SoundService
+	-- Registra aba
+	TabRegistry[pluginId] = tabData.BuildContent
+	local btn = createTab(tabData.Name, tabData.IconId)
+	btn.Activated:Connect(function() playClick(); selectTab(tabData.Name) end)
+	addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
+
+	-- Salva plugin em disco
+	local source = funcToString(tabData.BuildContent)
+	if source and HAS_FS then
+		savePlugin(pluginId, source)
+	end
+
+	-- Salva info do plugin em Save
+	Save.data.plugins[pluginId] = {
+		name = tabData.Name,
+		iconId = tabData.IconId,
+		installDate = os.time(),
+	}
+	Save.write()
+
+	notify("Plugin instalado: " .. tabData.Name, "success")
+	return true
 end
 
-local function updateMusic()
-	if not musicPlayer then
-		if musicState.SoundId then
-			musicPlayer = Instance.new("Sound")
-			musicPlayer.Parent = SoundService
-		else
-			return
-		end
-	end
-	musicPlayer.SoundId = "rbxassetid://" .. tostring(musicState.SoundId)
-	musicPlayer.Volume = musicState.Volume
-	musicPlayer.Looped = musicState.Loop
-	if musicState.Playing then
-		musicPlayer:Play()
-	else
-		musicPlayer:Pause()
-	end
+local api = Instance.new("BindableFunction")
+api.Name = "BatataHub_RegisterTab"
+api.Parent = ReplicatedStorage
+api.OnInvoke = function(password, tabData)
+	return RegisterExternalTab(password, tabData)
 end
 
+-- Configurações
 local function showSettingsPanel()
 	if settingsOpen then return end
 	settingsOpen = true
@@ -1036,238 +754,14 @@ local function showSettingsPanel()
 		lbl.TextColor3 = ACCENT
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.Parent = scroll
-		return lbl
-	end
-
-	-- MÚSICA
-	sectionHeader("🎵 MÚSICA LOCAL")
-
-	local musicBox = Instance.new("Frame")
-	musicBox.Size = UDim2.new(1, -8, 0, 110)
-	musicBox.BackgroundColor3 = CARD
-	musicBox.BorderSizePixel = 0
-	musicBox.Parent = scroll
-	Instance.new("UICorner", musicBox).CornerRadius = UDim.new(0, 5)
-
-	local musicInput = Instance.new("TextBox")
-	musicInput.Size = UDim2.new(1, -16, 0, 22)
-	musicInput.Position = UDim2.fromOffset(8, 8)
-	musicInput.BackgroundColor3 = PANEL
-	musicInput.Text = musicState.SoundId and tostring(musicState.SoundId) or ""
-	musicInput.PlaceholderText = "ID da música"
-	musicInput.PlaceholderColor3 = SUBTEXT
-	musicInput.Font = Enum.Font.Gotham
-	musicInput.TextSize = 10
-	musicInput.TextColor3 = TEXT
-	musicInput.ClearTextOnFocus = false
-	musicInput.Parent = musicBox
-	Instance.new("UICorner", musicInput).CornerRadius = UDim.new(0, 4)
-
-	local playBtn = Instance.new("TextButton")
-	playBtn.Size = UDim2.fromOffset(70, 22)
-	playBtn.Position = UDim2.fromOffset(8, 36)
-	playBtn.BackgroundColor3 = ACCENT
-	playBtn.Text = musicState.Playing and "⏸ Pausar" or "▶ Tocar"
-	playBtn.Font = Enum.Font.GothamBold
-	playBtn.TextSize = 10
-	playBtn.TextColor3 = BLACK
-	playBtn.AutoButtonColor = false
-	playBtn.Parent = musicBox
-	Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 4)
-
-	local stopBtn = Instance.new("TextButton")
-	stopBtn.Size = UDim2.fromOffset(60, 22)
-	stopBtn.Position = UDim2.fromOffset(84, 36)
-	stopBtn.BackgroundColor3 = CARD
-	stopBtn.Text = "⏹ Parar"
-	stopBtn.Font = Enum.Font.GothamBold
-	stopBtn.TextSize = 10
-	stopBtn.TextColor3 = SUBTEXT
-	stopBtn.AutoButtonColor = false
-	stopBtn.Parent = musicBox
-	Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0, 4)
-
-	local loopBtn = Instance.new("TextButton")
-	loopBtn.Size = UDim2.fromOffset(60, 22)
-	loopBtn.Position = UDim2.fromOffset(150, 36)
-	loopBtn.BackgroundColor3 = musicState.Loop and ACCENT or CARD
-	loopBtn.Text = "🔁 Loop"
-	loopBtn.Font = Enum.Font.GothamBold
-	loopBtn.TextSize = 10
-	loopBtn.TextColor3 = musicState.Loop and BLACK or SUBTEXT
-	loopBtn.AutoButtonColor = false
-	loopBtn.Parent = musicBox
-	Instance.new("UICorner", loopBtn).CornerRadius = UDim.new(0, 4)
-
-	local volLabel = Instance.new("TextLabel")
-	volLabel.BackgroundTransparency = 1
-	volLabel.Position = UDim2.fromOffset(8, 62)
-	volLabel.Size = UDim2.new(0, 100, 0, 12)
-	volLabel.Font = Enum.Font.Gotham
-	volLabel.Text = "Volume: " .. math.floor(musicState.Volume * 100) .. "%"
-	volLabel.TextSize = 9
-	volLabel.TextColor3 = SUBTEXT
-	volLabel.TextXAlignment = Enum.TextXAlignment.Left
-	volLabel.Parent = musicBox
-
-	local volTrack = Instance.new("Frame")
-	volTrack.Position = UDim2.fromOffset(8, 78)
-	volTrack.Size = UDim2.new(1, -16, 0, 5)
-	volTrack.BackgroundColor3 = PANEL
-	volTrack.BorderSizePixel = 0
-	volTrack.Parent = musicBox
-	Instance.new("UICorner", volTrack).CornerRadius = UDim.new(1, 0)
-
-	local volFill = Instance.new("Frame")
-	volFill.Size = UDim2.new(musicState.Volume, 0, 1, 0)
-	volFill.BackgroundColor3 = ACCENT
-	volFill.BorderSizePixel = 0
-	volFill.Parent = volTrack
-	Instance.new("UICorner", volFill).CornerRadius = UDim.new(1, 0)
-
-	local volKnob = Instance.new("Frame")
-	volKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-	volKnob.Position = UDim2.new(musicState.Volume, 0, 0.5, 0)
-	volKnob.Size = UDim2.fromOffset(11, 11)
-	volKnob.BackgroundColor3 = TEXT
-	volKnob.BorderSizePixel = 0
-	volKnob.Parent = volTrack
-	Instance.new("UICorner", volKnob).CornerRadius = UDim.new(1, 0)
-
-	playBtn.Activated:Connect(function()
-		playClick()
-		local id = musicInput.Text:match("%d+")
-		if not id then return end
-		musicState.SoundId = tonumber(id)
-		if musicState.Playing and musicPlayer then
-			musicPlayer:Stop()
-		end
-		musicState.Playing = not musicState.Playing
-		updateMusic()
-		playBtn.Text = musicState.Playing and "⏸ Pausar" or "▶ Tocar"
-		Save.data.musicId = musicState.SoundId
-		writeSave()
-	end)
-
-	stopBtn.Activated:Connect(function()
-		playClick()
-		if musicPlayer then musicPlayer:Stop() end
-		musicState.Playing = false
-		playBtn.Text = "▶ Tocar"
-	end)
-
-	loopBtn.Activated:Connect(function()
-		playClick()
-		musicState.Loop = not musicState.Loop
-		loopBtn.BackgroundColor3 = musicState.Loop and ACCENT or CARD
-		loopBtn.TextColor3 = musicState.Loop and BLACK or SUBTEXT
-		updateMusic()
-		Save.data.musicLoop = musicState.Loop
-		writeSave()
-	end)
-
-	local volDragging = false
-	local function setVol(x)
-		local rel = math.clamp((x - volTrack.AbsolutePosition.X) / volTrack.AbsoluteSize.X, 0, 1)
-		volFill.Size = UDim2.new(rel, 0, 1, 0)
-		volKnob.Position = UDim2.new(rel, 0, 0.5, 0)
-		musicState.Volume = rel
-		volLabel.Text = "Volume: " .. math.floor(rel * 100) .. "%"
-		if musicPlayer then musicPlayer.Volume = rel end
-		Save.data.musicVolume = rel
-		writeSave()
-	end
-
-	volTrack.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			volDragging = true
-			setVol(input.Position.X)
-		end
-	end)
-	volKnob.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			volDragging = true
-		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if volDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-			setVol(input.Position.X)
-		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			volDragging = false
-		end
-	end)
-
-	-- PREFERÊNCIAS
-	sectionHeader("⚙️ PREFERÊNCIAS")
-
-	local prefBox = Instance.new("Frame")
-	prefBox.Size = UDim2.new(1, -8, 0, 100)
-	prefBox.BackgroundColor3 = CARD
-	prefBox.BorderSizePixel = 0
-	prefBox.Parent = scroll
-	Instance.new("UICorner", prefBox).CornerRadius = UDim.new(0, 5)
-
-	local prefs = {
-		{key = "notifications", label = "Notificações"},
-		{key = "soundEnabled", label = "Sons do Hub"},
-		{key = "autoBackup", label = "Backup automático"},
-		{key = "reduceMotion", label = "Reduzir animações"},
-	}
-
-	for i, pref in ipairs(prefs) do
-		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, -16, 0, 22)
-		row.Position = UDim2.fromOffset(8, 6 + (i - 1) * 23)
-		row.BackgroundTransparency = 1
-		row.Parent = prefBox
-
-		local lbl = Instance.new("TextLabel")
-		lbl.BackgroundTransparency = 1
-		lbl.Size = UDim2.new(1, -40, 1, 0)
-		lbl.Font = Enum.Font.Gotham
-		lbl.Text = pref.label
-		lbl.TextSize = 10
-		lbl.TextColor3 = TEXT
-		lbl.TextXAlignment = Enum.TextXAlignment.Left
-		lbl.Parent = row
-
-		local state = Save.data.settings[pref.key] ~= false
-		local btn = Instance.new("TextButton")
-		btn.AnchorPoint = Vector2.new(1, 0.5)
-		btn.Position = UDim2.new(1, 0, 0.5, 0)
-		btn.Size = UDim2.fromOffset(30, 16)
-		btn.BackgroundColor3 = state and ACCENT or PANEL
-		btn.Text = ""
-		btn.AutoButtonColor = false
-		btn.Parent = row
-		Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-
-		local knob = Instance.new("Frame")
-		knob.Size = UDim2.fromOffset(12, 12)
-		knob.Position = state and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
-		knob.BackgroundColor3 = state and BLACK or SUBTEXT
-		knob.BorderSizePixel = 0
-		knob.Parent = btn
-		Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-
-		btn.MouseButton1Click:Connect(function()
-			playClick()
-			state = not state
-			Save.data.settings[pref.key] = state
-			btn.BackgroundColor3 = state and ACCENT or PANEL
-			knob.BackgroundColor3 = state and BLACK or SUBTEXT
-			knob.Position = state and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
-			writeSave()
-		end)
 	end
 
 	-- PLUGINS
 	sectionHeader("🔌 PLUGINS INSTALADOS")
 
 	local plugins = listPlugins()
+	print("[BatataHub] Plugins na lista:", #plugins)
+
 	if #plugins == 0 then
 		local empty = Instance.new("TextLabel")
 		empty.BackgroundTransparency = 1
@@ -1290,7 +784,7 @@ local function showSettingsPanel()
 			local nameLbl = Instance.new("TextLabel")
 			nameLbl.BackgroundTransparency = 1
 			nameLbl.Position = UDim2.fromOffset(8, 0)
-			nameLbl.Size = UDim2.new(1, -110, 1, 0)
+			nameLbl.Size = UDim2.new(1, -80, 1, 0)
 			nameLbl.Font = Enum.Font.GothamBold
 			nameLbl.Text = pluginInfo.name
 			nameLbl.TextSize = 10
@@ -1298,80 +792,35 @@ local function showSettingsPanel()
 			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
 			nameLbl.Parent = row
 
-			local exportBtn = Instance.new("TextButton")
-			exportBtn.AnchorPoint = Vector2.new(1, 0.5)
-			exportBtn.Position = UDim2.new(1, -70, 0.5, 0)
-			exportBtn.Size = UDim2.fromOffset(28, 16)
-			exportBtn.BackgroundColor3 = CARD
-			exportBtn.Text = "📤"
-			exportBtn.Font = Enum.Font.GothamBold
-			exportBtn.TextSize = 10
-			exportBtn.TextColor3 = ACCENT
-			exportBtn.AutoButtonColor = false
-			exportBtn.Parent = row
-			Instance.new("UICorner", exportBtn).CornerRadius = UDim.new(0, 4)
-
-			local runBtn = Instance.new("TextButton")
-			runBtn.AnchorPoint = Vector2.new(1, 0.5)
-			runBtn.Position = UDim2.new(1, -6, 0.5, 0)
-			runBtn.Size = UDim2.fromOffset(28, 16)
-			runBtn.BackgroundColor3 = ACCENT
-			runBtn.Text = "▶"
-			runBtn.Font = Enum.Font.GothamBold
-			runBtn.TextSize = 10
-			runBtn.TextColor3 = BLACK
-			runBtn.AutoButtonColor = false
-			runBtn.Parent = row
-			Instance.new("UICorner", runBtn).CornerRadius = UDim.new(0, 4)
-
 			local delBtn = Instance.new("TextButton")
 			delBtn.AnchorPoint = Vector2.new(1, 0.5)
-			delBtn.Position = UDim2.new(1, -38, 0.5, 0)
-			delBtn.Size = UDim2.fromOffset(28, 16)
-			delBtn.BackgroundColor3 = CARD
+			delBtn.Position = UDim2.new(1, -6, 0.5, 0)
+			delBtn.Size = UDim2.fromOffset(30, 16)
+			delBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
 			delBtn.Text = "✕"
 			delBtn.Font = Enum.Font.GothamBold
 			delBtn.TextSize = 10
-			delBtn.TextColor3 = Color3.fromRGB(200, 80, 80)
+			delBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
 			delBtn.AutoButtonColor = false
 			delBtn.Parent = row
 			Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 4)
-
-			exportBtn.Activated:Connect(function()
-				playClick()
-				local json = exportPlugin(pluginInfo.pluginId)
-				if json then
-					if setclipboard then
-						setclipboard(json)
-						notify("Plugin exportado!", "success")
-					end
-				end
-			end)
-
-			runBtn.Activated:Connect(function()
-				playClick()
-				local src = loadPlugin(pluginInfo.pluginId)
-				if src then
-					local fn = stringToFunc(src)
-					if fn then pcall(fn) end
-				end
-			end)
 
 			delBtn.Activated:Connect(function()
 				playClick()
 				deletePlugin(pluginInfo.pluginId)
 				Save.data.plugins[pluginInfo.pluginId] = nil
-				writeSave()
+				Save.write()
 
-				if tabButtons[pluginInfo.pluginId] then
-					tabButtons[pluginInfo.pluginId].Button:Destroy()
-					tabButtons[pluginInfo.pluginId] = nil
+				-- Remove botão da aba
+				if tabButtons[pluginInfo.name] then
+					tabButtons[pluginInfo.name].Button:Destroy()
+					tabButtons[pluginInfo.name] = nil
 				end
+				TabRegistry[pluginInfo.name] = nil
 				TabRegistry[pluginInfo.pluginId] = nil
 
 				row:Destroy()
-				statusBar.Text = "v" .. CONFIG.HubVersion .. " | " .. #listPlugins() .. " plugins"
-				notify("Plugin removido.", "success")
+				notify("Plugin removido: " .. pluginInfo.name, "success")
 			end)
 		end
 	end
@@ -1415,7 +864,7 @@ local function showSettingsPanel()
 	local bgClear = Instance.new("TextButton")
 	bgClear.Size = UDim2.fromOffset(70, 22)
 	bgClear.Position = UDim2.fromOffset(84, 36)
-	bgClear.BackgroundColor3 = CARD
+	bgClear.BackgroundColor3 = PANEL
 	bgClear.Text = "Limpar"
 	bgClear.Font = Enum.Font.GothamBold
 	bgClear.TextSize = 10
@@ -1431,7 +880,7 @@ local function showSettingsPanel()
 			bgImage.Image = "rbxassetid://" .. id
 			TweenService:Create(bgImage, TweenInfo.new(0.4, Enum.EasingStyle.Sine), {ImageTransparency = 0.8}):Play()
 			Save.data.backgroundId = tonumber(id)
-			writeSave()
+			Save.write()
 			notify("Fundo aplicado!", "success")
 		end
 	end)
@@ -1440,61 +889,8 @@ local function showSettingsPanel()
 		playClick()
 		bgImage.Image = ""
 		Save.data.backgroundId = nil
-		writeSave()
+		Save.write()
 		bgInput.Text = ""
-	end)
-
-	-- AÇÕES
-	sectionHeader("🛠️ AÇÕES")
-
-	local actionRow = Instance.new("Frame")
-	actionRow.Size = UDim2.new(1, -8, 0, 60)
-	actionRow.BackgroundColor3 = CARD
-	actionRow.BorderSizePixel = 0
-	actionRow.Parent = scroll
-	Instance.new("UICorner", actionRow).CornerRadius = UDim.new(0, 5)
-
-	local backupBtn = Instance.new("TextButton")
-	backupBtn.Size = UDim2.new(1, -16, 0, 22)
-	backupBtn.Position = UDim2.fromOffset(8, 8)
-	backupBtn.BackgroundColor3 = PANEL
-	backupBtn.Text = "💾 Criar Backup Agora"
-	backupBtn.Font = Enum.Font.GothamBold
-	backupBtn.TextSize = 10
-	backupBtn.TextColor3 = TEXT
-	backupBtn.AutoButtonColor = false
-	backupBtn.Parent = actionRow
-	Instance.new("UICorner", backupBtn).CornerRadius = UDim.new(0, 4)
-
-	local importBtn = Instance.new("TextButton")
-	importBtn.Size = UDim2.new(1, -16, 0, 22)
-	importBtn.Position = UDim2.fromOffset(8, 34)
-	importBtn.BackgroundColor3 = PANEL
-	importBtn.Text = "📥 Importar Plugin (colar)"
-	importBtn.Font = Enum.Font.GothamBold
-	importBtn.TextSize = 10
-	importBtn.TextColor3 = TEXT
-	importBtn.AutoButtonColor = false
-	importBtn.Parent = actionRow
-	Instance.new("UICorner", importBtn).CornerRadius = UDim.new(0, 4)
-
-	backupBtn.Activated:Connect(function()
-		playClick()
-		createBackup()
-		notify("Backup criado!", "success")
-	end)
-
-	importBtn.Activated:Connect(function()
-		playClick()
-		if getclipboard then
-			local json = getclipboard()
-			local ok, msg = importPlugin(json)
-			if ok then
-				notify("Plugin importado!", "success")
-			else
-				notify("Falha: " .. (msg or "erro"), "error")
-			end
-		end
 	end)
 
 	-- VOLTAR
@@ -1512,7 +908,7 @@ local function showSettingsPanel()
 	backBtn.Activated:Connect(function()
 		playClick()
 		settingsOpen = false
-		selectTab(Save.data.lastTab or "HOME", true)
+		selectTab(Save.data.lastTab or "HOME")
 	end)
 end
 
@@ -1521,17 +917,6 @@ gear.Activated:Connect(function()
 	if settingsOpen then return end
 	showSettingsPanel()
 end)
-
---// Restaura aba inicial
-local initialTab = "HOME"
-if Save.data.lastTab and TabRegistry[Save.data.lastTab] then
-	initialTab = Save.data.lastTab
-end
-selectTab(initialTab, true)
---// ============================================================
---// BATATA HUB — Abertura, Fechamento, Arrastos e Restauração
---// ============================================================
-
 local opened = false
 local busy = false
 
@@ -1579,10 +964,7 @@ floating.Activated:Connect(function()
 	if opened then closeHub() else openHub() end
 end)
 
-close.Activated:Connect(function()
-	playClick()
-	closeHub()
-end)
+close.Activated:Connect(function() playClick(); closeHub() end)
 
 -- Arrasto do botão
 local draggingButton = false
@@ -1632,54 +1014,26 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
--- Restaura plugins salvos
-local function restorePlugins()
-	local savedPlugins = Save.data.plugins or {}
-	local count = 0
-
-	for pluginId, info in pairs(savedPlugins) do
-		if type(info) == "table" then
-			local name = info.name or pluginId
-			local iconId = info.iconId
-			local src = loadPlugin(pluginId)
-
-			if src then
-				savePlugin(pluginId, src)  -- Re-grava por segurança
-				local fn = stringToFunc(src)
-				if fn then
-					registerTab(pluginId, name, fn, iconId, true, nil)
-					count = count + 1
-				end
+-- Restaura plugins salvos ao abrir o hub
+task.spawn(function()
+	task.wait(0.5)
+	local plugins = listPlugins()
+	for _, info in ipairs(plugins) do
+		local src = loadPlugin(info.pluginId)
+		if src then
+			local fn = stringToFunc(src)
+			if fn and not TabRegistry[info.name] then
+				TabRegistry[info.name] = fn
+				local btn = createTab(info.name, info.iconId)
+				btn.Activated:Connect(function() playClick(); selectTab(info.name) end)
+				addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
+				print("[BatataHub] Plugin restaurado:", info.name)
 			end
 		end
 	end
-
-	if count > 0 then
-		print("[BatataHub] " .. count .. " plugin(s) restaurado(s).")
-	end
-end
-
-task.spawn(function()
-	task.wait(0.5)
-	restorePlugins()
-	statusBar.Text = "v" .. CONFIG.HubVersion .. " | " .. #listPlugins() .. " plugins"
 end)
 
---// AUTO-UPDATE (checa versão nova)
-task.spawn(function()
-	if CONFIG.HubSourceUrl == "" then return end
-	task.wait(3)
-	local ok, remote = pcall(function()
-		return game:HttpGet(CONFIG.HubSourceUrl .. "/version.txt")
-	end)
-	if ok and remote and remote ~= CONFIG.HubVersion then
-		notify("Nova versão disponível: " .. remote, "warn", 5)
-	end
-end)
---// ============================================================
---// BATATA HUB — Intro Cinematográfica
---// ============================================================
-
+-- Intro
 local function spawnFallTrail(device)
 	task.spawn(function()
 		for i = 1, 5 do
@@ -1696,12 +1050,6 @@ local function spawnFallTrail(device)
 end
 
 local function PlayIntroSequence()
-	if Save.data.settings.reduceMotion then
-		floating.Visible = true
-		TweenService:Create(floatingScale, TweenInfo.new(0.3), {Scale = 1}):Play()
-		return
-	end
-
 	floating.Visible = false
 
 	local spawnCenter = UDim2.new(
@@ -1709,7 +1057,6 @@ local function PlayIntroSequence()
 		0, floating.Position.Y.Offset + floating.Size.Y.Offset / 2
 	)
 
-	-- Portal
 	local portal = Instance.new("ImageLabel")
 	portal.BackgroundTransparency = 1
 	portal.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1729,7 +1076,6 @@ local function PlayIntroSequence()
 	local spinTween = TweenService:Create(portal, TweenInfo.new(6, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), {Rotation = 360})
 	spinTween:Play()
 
-	-- Cabeça do Rick
 	local head = Instance.new("ImageLabel")
 	head.BackgroundTransparency = 1
 	head.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1754,7 +1100,6 @@ local function PlayIntroSequence()
 	tweenAsync(headScale, TweenInfo.new(1.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Scale = 0.01})
 	head:Destroy()
 
-	-- Dispositivo Omega
 	local device = Instance.new("ImageLabel")
 	device.BackgroundTransparency = 1
 	device.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1783,7 +1128,6 @@ local function PlayIntroSequence()
 
 	task.wait(0.15)
 
-	-- Flash
 	local flash = Instance.new("Frame")
 	flash.AnchorPoint = Vector2.new(0.5, 0.5)
 	flash.Position = device.Position
@@ -1797,7 +1141,6 @@ local function PlayIntroSequence()
 		Size = UDim2.fromOffset(170, 170), BackgroundTransparency = 1,
 	}):Play()
 
-	-- Shockwave
 	local shockwave = Instance.new("Frame")
 	shockwave.AnchorPoint = Vector2.new(0.5, 0.5)
 	shockwave.Position = device.Position
@@ -1813,7 +1156,6 @@ local function PlayIntroSequence()
 	TweenService:Create(shockStroke, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Thickness = 0, Transparency = 1}):Play()
 	Debris:AddItem(shockwave, 0.6)
 
-	-- Sparks
 	for i = 1, 18 do
 		local spark = Instance.new("Frame")
 		spark.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1848,10 +1190,4 @@ end
 
 task.spawn(PlayIntroSequence)
 
--- Notificação inicial
-task.wait(1.5)
-notify("Batata Hub v" .. CONFIG.HubVersion .. " carregado!", "success", 4)
-
 print("[Batata Hub] Interface carregada com sucesso!")
-print("[Batata Hub] Plugins instalados: " .. #listPlugins())
-print("[Batata Hub] Última abertura: " .. os.date("%d/%m/%Y %H:%M", Save.data.stats.lastOpen))
