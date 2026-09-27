@@ -88,7 +88,7 @@ local Save = {}
 local DEFAULT_SAVE = {
 	lastTab = nil,
 	backgroundId = nil,
-	plugins = {}, -- { [pluginId] = { name, iconId, installDate } }
+	plugins = {},
 }
 
 local function readSave()
@@ -117,7 +117,6 @@ local function writeSave()
 end
 Save.write = writeSave
 
--- SISTEMA DE PLUGINS
 local function pluginPath(id) return PLUGINS_FOLDER .. "/" .. id .. ".lua" end
 
 local function pluginExists(id)
@@ -246,7 +245,6 @@ local function notify(text, kind, duration)
 	end)
 end
 
--- Botão flutuante
 local floating = Instance.new("ImageButton")
 floating.Name = "BatataButton"
 floating.Size = UDim2.fromOffset(BUTTON_SIZE, BUTTON_SIZE)
@@ -336,7 +334,6 @@ if Save.data.backgroundId then
 	bgImage.Image = "rbxassetid://" .. tostring(Save.data.backgroundId)
 end
 
--- Header
 local header = Instance.new("Frame")
 header.Name = "Header"
 header.Size = UDim2.new(1, 0, 0, 34)
@@ -427,7 +424,6 @@ close.Parent = header
 Instance.new("UICorner", close).CornerRadius = UDim.new(0, 5)
 addHover(close, CARD, Color3.fromRGB(60, 30, 30))
 
--- Tabs e Content
 local tabs = Instance.new("Frame")
 tabs.Name = "Tabs"
 tabs.Size = UDim2.new(1, -14, 0, 22)
@@ -537,14 +533,17 @@ local function createTab(name, iconId)
 	return button
 end
 
-local function selectTab(name)
-	local buildFn = TabRegistry[name]
-	if not buildFn then return end
+local function selectTab(pluginId)
+	local entry = TabRegistry[pluginId]
+	if not entry then
+		warn("[BatataHub] Aba não encontrada:", pluginId)
+		return
+	end
 
 	settingsOpen = false
 
 	for tabName, data in pairs(tabButtons) do
-		if tabName == name then
+		if tabName == pluginId or tabName == entry.name then
 			TweenService:Create(data.Button, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {BackgroundColor3 = ACCENT}):Play()
 			TweenService:Create(data.Label, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {TextColor3 = BLACK}):Play()
 		else
@@ -554,106 +553,109 @@ local function selectTab(name)
 	end
 
 	local page = createPage()
-	buildFn(page, ctx)
+	entry.buildFn(page, ctx)
 
-	Save.data.lastTab = name
-	Save.write()
+	Save.data.lastTab = pluginId
+	writeSave()
 end
 
--- Aba HOME
-TabRegistry["HOME"] = function(page, ctx)
-	local welcome = Instance.new("TextLabel")
-	welcome.BackgroundTransparency = 1
-	welcome.Position = UDim2.fromOffset(9, 8)
-	welcome.Size = UDim2.new(1, -18, 0, 18)
-	welcome.Font = Enum.Font.GothamBlack
-	welcome.Text = "Olá, " .. ctx.player.Name .. "!"
-	welcome.TextSize = 14
-	welcome.TextColor3 = ctx.colors.TEXT
-	welcome.TextXAlignment = Enum.TextXAlignment.Left
-	welcome.Parent = page
+TabRegistry["HOME"] = {
+	name = "HOME",
+	iconId = nil,
+	buildFn = function(page, ctx)
+		local welcome = Instance.new("TextLabel")
+		welcome.BackgroundTransparency = 1
+		welcome.Position = UDim2.fromOffset(9, 8)
+		welcome.Size = UDim2.new(1, -18, 0, 18)
+		welcome.Font = Enum.Font.GothamBlack
+		welcome.Text = "Olá, " .. ctx.player.Name .. "!"
+		welcome.TextSize = 14
+		welcome.TextColor3 = ctx.colors.TEXT
+		welcome.TextXAlignment = Enum.TextXAlignment.Left
+		welcome.Parent = page
 
-	local description = Instance.new("TextLabel")
-	description.BackgroundTransparency = 1
-	description.Position = UDim2.fromOffset(9, 26)
-	description.Size = UDim2.new(1, -19, 0, 16)
-	description.Font = Enum.Font.Gotham
-	description.Text = "Bem-vindo ao Batata Hub."
-	description.TextSize = 9
-	description.TextColor3 = ctx.colors.SUBTEXT
-	description.TextXAlignment = Enum.TextXAlignment.Left
-	description.Parent = page
+		local description = Instance.new("TextLabel")
+		description.BackgroundTransparency = 1
+		description.Position = UDim2.fromOffset(9, 26)
+		description.Size = UDim2.new(1, -19, 0, 16)
+		description.Font = Enum.Font.Gotham
+		description.Text = "Bem-vindo ao Batata Hub."
+		description.TextSize = 9
+		description.TextColor3 = ctx.colors.SUBTEXT
+		description.TextXAlignment = Enum.TextXAlignment.Left
+		description.Parent = page
 
-	local pingCard = Instance.new("Frame")
-	pingCard.Size = UDim2.new(0.48, 0, 0, 47)
-	pingCard.Position = UDim2.new(0, 9, 0, 50)
-	pingCard.BackgroundColor3 = ctx.colors.CARD
-	pingCard.Parent = page
-	Instance.new("UICorner", pingCard).CornerRadius = UDim.new(0, 5)
+		local pingCard = Instance.new("Frame")
+		pingCard.Size = UDim2.new(0.48, 0, 0, 47)
+		pingCard.Position = UDim2.new(0, 9, 0, 50)
+		pingCard.BackgroundColor3 = ctx.colors.CARD
+		pingCard.Parent = page
+		Instance.new("UICorner", pingCard).CornerRadius = UDim.new(0, 5)
 
-	local pingTitle = Instance.new("TextLabel")
-	pingTitle.BackgroundTransparency = 1
-	pingTitle.Position = UDim2.fromOffset(7, 6)
-	pingTitle.Size = UDim2.new(1, -13, 0, 11)
-	pingTitle.Font = Enum.Font.GothamBold
-	pingTitle.Text = "PING"
-	pingTitle.TextSize = 9
-	pingTitle.TextColor3 = ctx.colors.ACCENT
-	pingTitle.TextXAlignment = Enum.TextXAlignment.Left
-	pingTitle.Parent = pingCard
+		local pingTitle = Instance.new("TextLabel")
+		pingTitle.BackgroundTransparency = 1
+		pingTitle.Position = UDim2.fromOffset(7, 6)
+		pingTitle.Size = UDim2.new(1, -13, 0, 11)
+		pingTitle.Font = Enum.Font.GothamBold
+		pingTitle.Text = "PING"
+		pingTitle.TextSize = 9
+		pingTitle.TextColor3 = ctx.colors.ACCENT
+		pingTitle.TextXAlignment = Enum.TextXAlignment.Left
+		pingTitle.Parent = pingCard
 
-	local pingValue = Instance.new("TextLabel")
-	pingValue.BackgroundTransparency = 1
-	pingValue.Position = UDim2.fromOffset(7, 18)
-	pingValue.Size = UDim2.new(1, -13, 0, 17)
-	pingValue.Font = Enum.Font.GothamBlack
-	pingValue.Text = "..."
-	pingValue.TextSize = 14
-	pingValue.TextColor3 = ctx.colors.TEXT
-	pingValue.TextXAlignment = Enum.TextXAlignment.Left
-	pingValue.Parent = pingCard
+		local pingValue = Instance.new("TextLabel")
+		pingValue.BackgroundTransparency = 1
+		pingValue.Position = UDim2.fromOffset(7, 18)
+		pingValue.Size = UDim2.new(1, -13, 0, 17)
+		pingValue.Font = Enum.Font.GothamBlack
+		pingValue.Text = "..."
+		pingValue.TextSize = 14
+		pingValue.TextColor3 = ctx.colors.TEXT
+		pingValue.TextXAlignment = Enum.TextXAlignment.Left
+		pingValue.Parent = pingCard
 
-	local friendCard = Instance.new("Frame")
-	friendCard.Size = UDim2.new(0.48, 0, 0, 47)
-	friendCard.Position = UDim2.new(0.52, 0, 0, 50)
-	friendCard.BackgroundColor3 = ctx.colors.CARD
-	friendCard.Parent = page
-	Instance.new("UICorner", friendCard).CornerRadius = UDim.new(0, 5)
+		local friendCard = Instance.new("Frame")
+		friendCard.Size = UDim2.new(0.48, 0, 0, 47)
+		friendCard.Position = UDim2.new(0.52, 0, 0, 50)
+		friendCard.BackgroundColor3 = ctx.colors.CARD
+		friendCard.Parent = page
+		Instance.new("UICorner", friendCard).CornerRadius = UDim.new(0, 5)
 
-	local friendTitle = Instance.new("TextLabel")
-	friendTitle.BackgroundTransparency = 1
-	friendTitle.Position = UDim2.fromOffset(7, 6)
-	friendTitle.Size = UDim2.new(1, -13, 0, 11)
-	friendTitle.Font = Enum.Font.GothamBold
-	friendTitle.Text = "NO SERVIDOR"
-	friendTitle.TextSize = 9
-	friendTitle.TextColor3 = ctx.colors.ACCENT
-	friendTitle.TextXAlignment = Enum.TextXAlignment.Left
-	friendTitle.Parent = friendCard
+		local friendTitle = Instance.new("TextLabel")
+		friendTitle.BackgroundTransparency = 1
+		friendTitle.Position = UDim2.fromOffset(7, 6)
+		friendTitle.Size = UDim2.new(1, -13, 0, 11)
+		friendTitle.Font = Enum.Font.GothamBold
+		friendTitle.Text = "NO SERVIDOR"
+		friendTitle.TextSize = 9
+		friendTitle.TextColor3 = ctx.colors.ACCENT
+		friendTitle.TextXAlignment = Enum.TextXAlignment.Left
+		friendTitle.Parent = friendCard
 
-	local friendValue = Instance.new("TextLabel")
-	friendValue.BackgroundTransparency = 1
-	friendValue.Position = UDim2.fromOffset(7, 18)
-	friendValue.Size = UDim2.new(1, -13, 0, 17)
-	friendValue.Font = Enum.Font.GothamBlack
-	friendValue.Text = tostring(#Players:GetPlayers())
-	friendValue.TextSize = 14
-	friendValue.TextColor3 = ctx.colors.TEXT
-	friendValue.TextXAlignment = Enum.TextXAlignment.Left
-	friendValue.Parent = friendCard
+		local friendValue = Instance.new("TextLabel")
+		friendValue.BackgroundTransparency = 1
+		friendValue.Position = UDim2.fromOffset(7, 18)
+		friendValue.Size = UDim2.new(1, -13, 0, 17)
+		friendValue.Font = Enum.Font.GothamBlack
+		friendValue.Text = tostring(#Players:GetPlayers())
+		friendValue.TextSize = 14
+		friendValue.TextColor3 = ctx.colors.TEXT
+		friendValue.TextXAlignment = Enum.TextXAlignment.Left
+		friendValue.Parent = friendCard
 
-	task.spawn(function()
-		while page.Parent do
-			local start = os.clock()
-			task.wait()
-			local ms = math.floor((os.clock() - start) * 1000)
-			if ms < 1 then ms = math.random(20, 60) end
-			pingValue.Text = ms .. " ms"
-			friendValue.Text = tostring(#Players:GetPlayers())
-			task.wait(1)
-		end
-	end)
-end
+		task.spawn(function()
+			while page.Parent do
+				local start = os.clock()
+				task.wait()
+				local ms = math.floor((os.clock() - start) * 1000)
+				if ms < 1 then ms = math.random(20, 60) end
+				pingValue.Text = ms .. " ms"
+				friendValue.Text = tostring(#Players:GetPlayers())
+				task.wait(1)
+			end
+		end)
+	end,
+}
 
 local homeButton = createTab("HOME")
 homeButton.Activated:Connect(function() playClick(); selectTab("HOME") end)
@@ -670,6 +672,8 @@ local function RegisterExternalTab(password, tabData)
 	end
 
 	local pluginId = tabData.PluginId or tabData.Name
+	local displayName = tabData.Name
+
 	if TabRegistry[pluginId] then
 		notify("Você já tem esse plugin!", "error")
 		return false, "Já ativo"
@@ -679,27 +683,33 @@ local function RegisterExternalTab(password, tabData)
 		return false, "Já salvo"
 	end
 
-	-- Registra aba
-	TabRegistry[pluginId] = tabData.BuildContent
-	local btn = createTab(tabData.Name, tabData.IconId)
-	btn.Activated:Connect(function() playClick(); selectTab(tabData.Name) end)
+	TabRegistry[pluginId] = {
+		buildFn = tabData.BuildContent,
+		name = displayName,
+		iconId = tabData.IconId,
+	}
+
+	local btn = createTab(displayName, tabData.IconId)
+	btn.Activated:Connect(function()
+		playClick()
+		selectTab(pluginId)
+	end)
 	addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
 
-	-- Salva plugin em disco
 	local source = funcToString(tabData.BuildContent)
 	if source and HAS_FS then
 		savePlugin(pluginId, source)
 	end
 
-	-- Salva info do plugin em Save
 	Save.data.plugins[pluginId] = {
-		name = tabData.Name,
+		name = displayName,
 		iconId = tabData.IconId,
 		installDate = os.time(),
 	}
-	Save.write()
+	writeSave()
 
-	notify("Plugin instalado: " .. tabData.Name, "success")
+	notify("Plugin instalado: " .. displayName, "success")
+	print("[BatataHub] Plugin registrado:", pluginId)
 	return true
 end
 
@@ -710,7 +720,6 @@ api.OnInvoke = function(password, tabData)
 	return RegisterExternalTab(password, tabData)
 end
 
--- Configurações
 local function showSettingsPanel()
 	if settingsOpen then return end
 	settingsOpen = true
@@ -756,7 +765,6 @@ local function showSettingsPanel()
 		lbl.Parent = scroll
 	end
 
-	-- PLUGINS
 	sectionHeader("🔌 PLUGINS INSTALADOS")
 
 	local plugins = listPlugins()
@@ -807,17 +815,24 @@ local function showSettingsPanel()
 
 			delBtn.Activated:Connect(function()
 				playClick()
+
 				deletePlugin(pluginInfo.pluginId)
 				Save.data.plugins[pluginInfo.pluginId] = nil
-				Save.write()
+				writeSave()
 
-				-- Remove botão da aba
+				if TabRegistry[pluginInfo.pluginId] then
+					TabRegistry[pluginInfo.pluginId] = nil
+				end
+
 				if tabButtons[pluginInfo.name] then
 					tabButtons[pluginInfo.name].Button:Destroy()
 					tabButtons[pluginInfo.name] = nil
 				end
-				TabRegistry[pluginInfo.name] = nil
-				TabRegistry[pluginInfo.pluginId] = nil
+
+				if Save.data.lastTab == pluginInfo.pluginId then
+					Save.data.lastTab = "HOME"
+					writeSave()
+				end
 
 				row:Destroy()
 				notify("Plugin removido: " .. pluginInfo.name, "success")
@@ -825,7 +840,6 @@ local function showSettingsPanel()
 		end
 	end
 
-	-- FUNDO
 	sectionHeader("🎨 PLANO DE FUNDO")
 
 	local bgRow = Instance.new("Frame")
@@ -880,7 +894,7 @@ local function showSettingsPanel()
 			bgImage.Image = "rbxassetid://" .. id
 			TweenService:Create(bgImage, TweenInfo.new(0.4, Enum.EasingStyle.Sine), {ImageTransparency = 0.8}):Play()
 			Save.data.backgroundId = tonumber(id)
-			Save.write()
+			writeSave()
 			notify("Fundo aplicado!", "success")
 		end
 	end)
@@ -889,11 +903,10 @@ local function showSettingsPanel()
 		playClick()
 		bgImage.Image = ""
 		Save.data.backgroundId = nil
-		Save.write()
+		writeSave()
 		bgInput.Text = ""
 	end)
 
-	-- VOLTAR
 	local backBtn = Instance.new("TextButton")
 	backBtn.Size = UDim2.new(1, -8, 0, 24)
 	backBtn.BackgroundColor3 = CARD
@@ -966,7 +979,6 @@ end)
 
 close.Activated:Connect(function() playClick(); closeHub() end)
 
--- Arrasto do botão
 local draggingButton = false
 local dragStart, buttonStart
 
@@ -990,7 +1002,6 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
--- Arrasto do painel
 local draggingPanel = false
 local panelDragStart, panelStart
 
@@ -1014,7 +1025,6 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
--- Restaura plugins salvos ao abrir o hub
 task.spawn(function()
 	task.wait(0.5)
 	local plugins = listPlugins()
@@ -1022,18 +1032,24 @@ task.spawn(function()
 		local src = loadPlugin(info.pluginId)
 		if src then
 			local fn = stringToFunc(src)
-			if fn and not TabRegistry[info.name] then
-				TabRegistry[info.name] = fn
+			if fn and not TabRegistry[info.pluginId] then
+				TabRegistry[info.pluginId] = {
+					buildFn = fn,
+					name = info.name,
+					iconId = info.iconId,
+				}
 				local btn = createTab(info.name, info.iconId)
-				btn.Activated:Connect(function() playClick(); selectTab(info.name) end)
+				btn.Activated:Connect(function()
+					playClick()
+					selectTab(info.pluginId)
+				end)
 				addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
-				print("[BatataHub] Plugin restaurado:", info.name)
+				print("[BatataHub] Plugin restaurado:", info.pluginId)
 			end
 		end
 	end
 end)
 
--- Intro
 local function spawnFallTrail(device)
 	task.spawn(function()
 		for i = 1, 5 do
