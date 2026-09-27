@@ -666,9 +666,29 @@ local function RegisterExternalTab(password, tabData)
 		notify("Senha inválida.", "error")
 		return false, "Senha inválida"
 	end
-	if type(tabData) ~= "table" or type(tabData.Name) ~= "string" or type(tabData.BuildContent) ~= "function" then
+
+	if type(tabData) ~= "table" or type(tabData.Name) ~= "string" then
 		notify("Dados inválidos.", "error")
 		return false, "Dados inválidos"
+	end
+
+	local buildFn = nil
+	local sourceCode = nil
+
+	if type(tabData.BuildContent) == "function" then
+		buildFn = tabData.BuildContent
+		sourceCode = funcToString(tabData.BuildContent)
+	elseif type(tabData.BuildContent) == "string" then
+		local fn = loadstring(tabData.BuildContent)
+		if fn then
+			buildFn = fn
+			sourceCode = tabData.BuildContent
+		end
+	end
+
+	if not buildFn then
+		notify("BuildContent inválido.", "error")
+		return false, "BuildContent inválido"
 	end
 
 	local pluginId = tabData.PluginId or tabData.Name
@@ -684,7 +704,7 @@ local function RegisterExternalTab(password, tabData)
 	end
 
 	TabRegistry[pluginId] = {
-		buildFn = tabData.BuildContent,
+		buildFn = buildFn,
 		name = displayName,
 		iconId = tabData.IconId,
 	}
@@ -696,9 +716,8 @@ local function RegisterExternalTab(password, tabData)
 	end)
 	addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
 
-	local source = funcToString(tabData.BuildContent)
-	if source and HAS_FS then
-		savePlugin(pluginId, source)
+	if sourceCode and HAS_FS then
+		savePlugin(pluginId, sourceCode)
 	end
 
 	Save.data.plugins[pluginId] = {
@@ -1026,27 +1045,63 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 task.spawn(function()
-	task.wait(0.5)
+	task.wait(0.8)
+
 	local plugins = listPlugins()
+	local restored = 0
+	local failed = 0
+
 	for _, info in ipairs(plugins) do
-		local src = loadPlugin(info.pluginId)
-		if src then
-			local fn = stringToFunc(src)
-			if fn and not TabRegistry[info.pluginId] then
-				TabRegistry[info.pluginId] = {
-					buildFn = fn,
-					name = info.name,
-					iconId = info.iconId,
-				}
-				local btn = createTab(info.name, info.iconId)
-				btn.Activated:Connect(function()
-					playClick()
-					selectTab(info.pluginId)
-				end)
-				addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
-				print("[BatataHub] Plugin restaurado:", info.pluginId)
-			end
+		if TabRegistry[info.pluginId] then
+			continue
 		end
+
+		local src = loadPlugin(info.pluginId)
+
+		if not src or #src == 0 then
+			warn("[BatataHub] Plugin vazio:", info.pluginId)
+			failed = failed + 1
+			continue
+		end
+
+		local fn, err = loadstring(src)
+
+		if not fn then
+			warn("[BatataHub] Falha ao compilar plugin " .. info.pluginId .. ": " .. tostring(err))
+			failed = failed + 1
+			continue
+		end
+
+		TabRegistry[info.pluginId] = {
+			buildFn = fn,
+			name = info.name,
+			iconId = info.iconId,
+		}
+
+		local btn = createTab(info.name, info.iconId)
+		btn.Activated:Connect(function()
+			playClick()
+			selectTab(info.pluginId)
+		end)
+		addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
+
+		restored = restored + 1
+		print("[BatataHub] Plugin restaurado:", info.pluginId, "|", info.name)
+	end
+
+	if restored > 0 then
+		print("[BatataHub] " .. restored .. " plugin(s) restaurado(s).")
+	end
+	if failed > 0 then
+		warn("[BatataHub] " .. failed .. " plugin(s) com falha.")
+	end
+
+	task.wait(0.2)
+	local lastTab = Save.data.lastTab
+	if lastTab and TabRegistry[lastTab] then
+		selectTab(lastTab)
+	else
+		selectTab("HOME")
 	end
 end)
 
