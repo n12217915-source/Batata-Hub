@@ -1,18 +1,149 @@
+--// ============================================================
+--// BATATA HUB — Setup, Serviços e Sistema de Plugins
+--// ============================================================
+
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local old = playerGui:FindFirstChild("BatataHub")
 if old then old:Destroy() end
-
 local oldApi = ReplicatedStorage:FindFirstChild("BatataHub_RegisterTab")
 if oldApi then oldApi:Destroy() end
 
--- 🔧 PONTO G
+--// ------------------------------------------------------------
+--// SISTEMA DE PASTA (Batata Central)
+--// ------------------------------------------------------------
+local CONFIG_FOLDER = "Batata Central"
+local PLUGINS_FOLDER = CONFIG_FOLDER .. "/Plugins"
+local CONFIG_FILE = CONFIG_FOLDER .. "/hub.json"
+
+local function ensureFolders()
+	if not isfolder(CONFIG_FOLDER) then
+		makefolder(CONFIG_FOLDER)
+	end
+	if not isfolder(PLUGINS_FOLDER) then
+		makefolder(PLUGINS_FOLDER)
+	end
+end
+ensureFolders()
+
+--// ------------------------------------------------------------
+--// SAVE PRINCIPAL (hub.json)
+--// ------------------------------------------------------------
+local Save = {}
+
+local function readSave()
+	if isfile(CONFIG_FILE) then
+		local ok, decoded = pcall(function()
+			return HttpService:JSONDecode(readfile(CONFIG_FILE))
+		end)
+		if ok and type(decoded) == "table" then
+			return decoded
+		end
+	end
+	return {
+		lastTab = nil,
+		backgroundId = nil,
+		enabledPlugins = {},  -- [pluginName] = true/false
+	}
+end
+
+Save.data = readSave()
+
+local function writeSave()
+	pcall(function()
+		writefile(CONFIG_FILE, HttpService:JSONEncode(Save.data))
+	end)
+end
+Save.write = writeSave
+
+--// ------------------------------------------------------------
+--// SISTEMA DE PLUGINS
+--// Cada plugin é um arquivo .lua salvo em Batata Central/Plugins/
+--// Formato: [nome].lua que contém o BuildContent (função)
+--// ------------------------------------------------------------
+
+local function pluginPath(name)
+	return PLUGINS_FOLDER .. "/" .. name .. ".lua"
+end
+
+-- Salva o código-fonte de um plugin (string do BuildContent)
+local function savePlugin(name, source)
+	pcall(function()
+		writefile(pluginPath(name), source)
+	end)
+end
+
+-- Lê o código-fonte de um plugin
+local function loadPlugin(name)
+	local path = pluginPath(name)
+	if not isfile(path) then return nil end
+	local ok, src = pcall(function()
+		return readfile(path)
+	end)
+	if ok and src and #src > 0 then
+		return src
+	end
+	return nil
+end
+
+-- Remove um plugin
+local function deletePlugin(name)
+	pcall(function()
+		if isfile(pluginPath(name)) then
+			delfile(pluginPath(name))
+		end
+	end)
+end
+
+-- Lista todos os plugins salvos (nomes)
+local function listPlugins()
+	local list = {}
+	local ok, files = pcall(function()
+		return listfiles(PLUGINS_FOLDER)
+	end)
+	if ok and files then
+		for _, path in ipairs(files) do
+			local name = path:match("([^/\\]+)%.lua$")
+			if name then
+				table.insert(list, name)
+			end
+		end
+	end
+	return list
+end
+
+-- Converte uma função em string (código Lua)
+local function funcToString(fn)
+	local ok, s = pcall(string.dump, fn)
+	if ok and s then
+		return s
+	end
+	-- Fallback: usa debug.getinfo (não é 100% perfeito, mas ajuda)
+	return "-- Fallback não suportado"
+end
+
+-- Compila string de volta pra função
+local function stringToFunc(src)
+	local fn, err = loadstring(src)
+	if not fn then
+		return nil, err
+	end
+	return fn
+end
+
+--// ------------------------------------------------------------
+--// PONTO G
+--// ------------------------------------------------------------
 local ACCENT = Color3.fromRGB(255, 200, 20)
 local ACCENT_DARK = Color3.fromRGB(150, 105, 0)
 local BLACK = Color3.fromRGB(10, 10, 10)
@@ -23,10 +154,56 @@ local SUBTEXT = Color3.fromRGB(150, 150, 150)
 
 local PANEL_CLOSED = UDim2.fromOffset(308, 198)
 local PANEL_OPEN   = UDim2.fromOffset(341, 220)
+local BUTTON_SIZE = 56
 
 local CONFIG = {
-	ExternalPassword = "Batata001", -- senha que Scripts externos usam pra registrar abas
+	ExternalPassword = "Batata001",
+	VIPGamePassId = 0,
+	ClickSoundId = "rbxassetid://86847045401690",
+
+	PortalIconId        = 128039132946840,
+	RickHeadIconId      = 131775579293831,
+	OmegaDeviceIconId   = 96858175598695,
+	PortalAppearSoundId = "rbxassetid://104121542162714",
+	RickAppearSoundId   = "rbxassetid://135042210759082",
 }
+
+local clickSound = Instance.new("Sound")
+clickSound.Name = "BatataClick"
+clickSound.SoundId = CONFIG.ClickSoundId
+clickSound.Volume = 0.5
+clickSound.Parent = SoundService
+
+local function playClick() clickSound:Play() end
+
+local function playSound(id, volume)
+	if not id or id == "" then return end
+	local s = Instance.new("Sound")
+	s.SoundId = id
+	s.Volume = volume or 0.7
+	s.Parent = SoundService
+	s:Play()
+	Debris:AddItem(s, 5)
+end
+
+local function tweenAsync(instance, info, props)
+	local tw = TweenService:Create(instance, info, props)
+	tw:Play()
+	tw.Completed:Wait()
+	return tw
+end
+
+local function addHover(button, baseColor, hoverColor)
+	button.MouseEnter:Connect(function()
+		TweenService:Create(button, TweenInfo.new(0.12, Enum.EasingStyle.Sine), {BackgroundColor3 = hoverColor}):Play()
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(button, TweenInfo.new(0.12, Enum.EasingStyle.Sine), {BackgroundColor3 = baseColor}):Play()
+	end)
+end
+--// ============================================================
+--// BATATA HUB — GUI Base
+--// ============================================================
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "BatataHub"
@@ -35,50 +212,43 @@ gui.IgnoreGuiInset = true
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = playerGui
 
-local floating = Instance.new("TextButton")
+local floating = Instance.new("ImageButton")
 floating.Name = "BatataButton"
-floating.Size = UDim2.fromOffset(32, 32)
-floating.Position = UDim2.new(0, 14, 0.5, -16)
+floating.Size = UDim2.fromOffset(BUTTON_SIZE, BUTTON_SIZE)
+floating.Position = UDim2.new(0, 14, 0.5, -BUTTON_SIZE / 2)
 floating.AnchorPoint = Vector2.new(0, 0)
-floating.BackgroundColor3 = PANEL
-floating.Text = "🥔"
-floating.TextSize = 15
-floating.Font = Enum.Font.GothamBold
-floating.TextColor3 = TEXT
+floating.BackgroundTransparency = 1
+floating.Image = "rbxassetid://" .. tostring(CONFIG.OmegaDeviceIconId)
+floating.ScaleType = Enum.ScaleType.Fit
 floating.AutoButtonColor = false
 floating.ZIndex = 100
 floating.Parent = gui
 
-local floatingCorner = Instance.new("UICorner")
-floatingCorner.CornerRadius = UDim.new(1, 0)
-floatingCorner.Parent = floating
-
-local floatingGradient = Instance.new("UIGradient")
-floatingGradient.Color = ColorSequence.new(ACCENT_DARK, PANEL)
-floatingGradient.Rotation = 90
-floatingGradient.Parent = floating
-
-local floatingStroke = Instance.new("UIStroke")
+local floatingStroke = Instance.new("UIStroke", floating)
 floatingStroke.Color = ACCENT
-floatingStroke.Thickness = 1.5
-floatingStroke.Parent = floating
+floatingStroke.Thickness = 0
+floatingStroke.Transparency = 0.3
 
 local floatingScale = Instance.new("UIScale")
 floatingScale.Scale = 0.01
 floatingScale.Parent = floating
 
-TweenService:Create(
-	floatingScale,
-	TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-	{Scale = 1}
-):Play()
+task.spawn(function()
+	while floating.Parent do
+		TweenService:Create(floatingStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 2}):Play()
+		task.wait(1.3)
+		TweenService:Create(floatingStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 0}):Play()
+		task.wait(1.3)
+	end
+end)
 
 local function pulseButton()
-	local down = TweenService:Create(floatingScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 0.85})
-	local up = TweenService:Create(floatingScale, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1})
+	local down = TweenService:Create(floatingScale, TweenInfo.new(0.09, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Scale = 0.8})
+	local up = TweenService:Create(floatingScale, TweenInfo.new(0.28, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {Scale = 1})
 	down:Play()
 	down.Completed:Connect(function() up:Play() end)
 end
+
 local panel = Instance.new("Frame")
 panel.Name = "Main"
 panel.Size = PANEL_CLOSED
@@ -86,19 +256,51 @@ panel.Position = UDim2.new(0.5, 0, 0.5, 0)
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.BackgroundColor3 = BLACK
 panel.BackgroundTransparency = 1
+panel.ClipsDescendants = true
 panel.Visible = false
 panel.ZIndex = 10
 panel.Parent = gui
 
-local panelCorner = Instance.new("UICorner")
-panelCorner.CornerRadius = UDim.new(0, 8)
-panelCorner.Parent = panel
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
 
-local panelStroke = Instance.new("UIStroke")
+local panelGradient = Instance.new("UIGradient", panel)
+panelGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(16, 16, 16)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 8, 8)),
+})
+panelGradient.Rotation = 80
+
+local panelStroke = Instance.new("UIStroke", panel)
 panelStroke.Color = ACCENT
 panelStroke.Thickness = 1.2
 panelStroke.Transparency = 1
-panelStroke.Parent = panel
+
+task.spawn(function()
+	while panel.Parent do
+		if panel.Visible then
+			TweenService:Create(panelStroke, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 1.8}):Play()
+			task.wait(1.6)
+			TweenService:Create(panelStroke, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Thickness = 1.2}):Play()
+			task.wait(1.6)
+		else
+			task.wait(0.3)
+		end
+	end
+end)
+
+local bgImage = Instance.new("ImageLabel")
+bgImage.Name = "Background"
+bgImage.BackgroundTransparency = 1
+bgImage.Size = UDim2.fromScale(1, 1)
+bgImage.ImageTransparency = 0.8
+bgImage.ScaleType = Enum.ScaleType.Crop
+bgImage.ZIndex = 1
+bgImage.Image = ""
+bgImage.Parent = panel
+
+if Save.data.backgroundId then
+	bgImage.Image = "rbxassetid://" .. tostring(Save.data.backgroundId)
+end
 
 local header = Instance.new("Frame")
 header.Name = "Header"
@@ -108,15 +310,13 @@ header.BorderSizePixel = 0
 header.ZIndex = 11
 header.Parent = panel
 
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 8)
-headerCorner.Parent = header
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
 
 local headerDivider = Instance.new("Frame")
 headerDivider.Size = UDim2.new(1, 0, 0, 1)
 headerDivider.Position = UDim2.new(0, 0, 1, -1)
 headerDivider.BackgroundColor3 = ACCENT
-headerDivider.BackgroundTransparency = 0.75
+headerDivider.BackgroundTransparency = 0.7
 headerDivider.BorderSizePixel = 0
 headerDivider.ZIndex = 11
 headerDivider.Parent = header
@@ -128,22 +328,15 @@ avatar.BackgroundColor3 = CARD
 avatar.ZIndex = 12
 avatar.Parent = header
 
-local avatarCorner = Instance.new("UICorner")
-avatarCorner.CornerRadius = UDim.new(1, 0)
-avatarCorner.Parent = avatar
+Instance.new("UICorner", avatar).CornerRadius = UDim.new(1, 0)
 
-local avatarStroke = Instance.new("UIStroke")
+local avatarStroke = Instance.new("UIStroke", avatar)
 avatarStroke.Color = ACCENT
 avatarStroke.Thickness = 1
-avatarStroke.Parent = avatar
 
 task.spawn(function()
 	local success, image = pcall(function()
-		return Players:GetUserThumbnailAsync(
-			player.UserId,
-			Enum.ThumbnailType.HeadShot,
-			Enum.ThumbnailSize.Size100x100
-		)
+		return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
 	end)
 	if success then avatar.Image = image end
 end)
@@ -151,7 +344,7 @@ end)
 local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(36, 4)
-title.Size = UDim2.fromOffset(160, 14)
+title.Size = UDim2.fromOffset(140, 14)
 title.Font = Enum.Font.GothamBlack
 title.Text = "BATATA HUB"
 title.TextSize = 12
@@ -163,7 +356,7 @@ title.Parent = header
 local username = Instance.new("TextLabel")
 username.BackgroundTransparency = 1
 username.Position = UDim2.fromOffset(36, 18)
-username.Size = UDim2.fromOffset(160, 11)
+username.Size = UDim2.fromOffset(120, 11)
 username.Font = Enum.Font.Gotham
 username.Text = "@" .. player.Name
 username.TextSize = 8
@@ -171,6 +364,20 @@ username.TextColor3 = ACCENT
 username.TextXAlignment = Enum.TextXAlignment.Left
 username.ZIndex = 12
 username.Parent = header
+
+local gear = Instance.new("TextButton")
+gear.Size = UDim2.fromOffset(20, 20)
+gear.Position = UDim2.new(1, -51, 0, 7)
+gear.BackgroundColor3 = CARD
+gear.Text = "⚙"
+gear.TextSize = 12
+gear.Font = Enum.Font.GothamBold
+gear.TextColor3 = SUBTEXT
+gear.AutoButtonColor = false
+gear.ZIndex = 13
+gear.Parent = header
+Instance.new("UICorner", gear).CornerRadius = UDim.new(0, 5)
+addHover(gear, CARD, Color3.fromRGB(38, 38, 38))
 
 local close = Instance.new("TextButton")
 close.Size = UDim2.fromOffset(20, 20)
@@ -183,10 +390,8 @@ close.TextColor3 = TEXT
 close.AutoButtonColor = false
 close.ZIndex = 13
 close.Parent = header
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 5)
-closeCorner.Parent = close
+Instance.new("UICorner", close).CornerRadius = UDim.new(0, 5)
+addHover(close, CARD, Color3.fromRGB(60, 30, 30))
 
 local tabs = Instance.new("Frame")
 tabs.Name = "Tabs"
@@ -210,28 +415,26 @@ content.BackgroundColor3 = PANEL
 content.BorderSizePixel = 0
 content.ZIndex = 11
 content.Parent = panel
+Instance.new("UICorner", content).CornerRadius = UDim.new(0, 6)
+--// ============================================================
+--// BATATA HUB — Sistema de Abas + Registro de Plugins
+--// ============================================================
 
-local contentCorner = Instance.new("UICorner")
-contentCorner.CornerRadius = UDim.new(0, 6)
-contentCorner.Parent = content
 local activePage = nil
 local tabButtons = {}
-local TabRegistry = {} -- Name -> function(container, ctx)
+local TabRegistry = {}
 
 local ctx = {
 	player = player,
 	config = CONFIG,
-	colors = {
-		ACCENT = ACCENT, ACCENT_DARK = ACCENT_DARK, BLACK = BLACK,
-		PANEL = PANEL, CARD = CARD, TEXT = TEXT, SUBTEXT = SUBTEXT,
-	},
+	colors = {ACCENT = ACCENT, ACCENT_DARK = ACCENT_DARK, BLACK = BLACK, PANEL = PANEL, CARD = CARD, TEXT = TEXT, SUBTEXT = SUBTEXT},
 }
 
 local function clearContent()
 	if activePage then
 		local dead = activePage
 		activePage = nil
-		local fade = TweenService:Create(dead, TweenInfo.new(0.1), {GroupTransparency = 1})
+		local fade = TweenService:Create(dead, TweenInfo.new(0.12, Enum.EasingStyle.Sine), {GroupTransparency = 1})
 		fade:Play()
 		fade.Completed:Connect(function() dead:Destroy() end)
 	end
@@ -241,54 +444,185 @@ local function createPage()
 	clearContent()
 	local page = Instance.new("CanvasGroup")
 	page.BackgroundTransparency = 1
-	page.Size = UDim2.fromScale(1, 1)
+	page.Size = UDim2.fromScale(1, 1.05)
+	page.Position = UDim2.fromScale(0, -0.05)
 	page.GroupTransparency = 1
 	page.ZIndex = 11
 	page.Parent = content
 	activePage = page
-	TweenService:Create(page, TweenInfo.new(0.16), {GroupTransparency = 0}):Play()
+	TweenService:Create(page, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		GroupTransparency = 0, Position = UDim2.fromScale(0, 0),
+	}):Play()
 	return page
 end
 
-local function createTab(name)
+local function createTab(name, iconId)
 	local button = Instance.new("TextButton")
-	button.Size = UDim2.fromOffset(62, 22)
+	button.Size = UDim2.fromOffset(iconId and 74 or 62, 22)
 	button.BackgroundColor3 = CARD
-	button.Text = name
-	button.TextSize = 9
-	button.Font = Enum.Font.GothamBold
-	button.TextColor3 = SUBTEXT
+	button.Text = ""
 	button.AutoButtonColor = false
 	button.ZIndex = 12
 	button.Parent = tabs
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 5)
-	corner.Parent = button
+	Instance.new("UICorner", button).CornerRadius = UDim.new(0, 5)
 
-	tabButtons[name] = button
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.Padding = UDim.new(0, 3)
+	layout.Parent = button
+
+	if iconId then
+		local icon = Instance.new("ImageLabel")
+		icon.Size = UDim2.fromOffset(12, 12)
+		icon.BackgroundTransparency = 1
+		icon.Image = "rbxassetid://" .. tostring(iconId)
+		icon.ZIndex = 12
+		icon.LayoutOrder = 1
+		icon.Parent = button
+	end
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromOffset(iconId and 50 or 58, 22)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 9
+	label.TextColor3 = SUBTEXT
+	label.Text = name
+	label.ZIndex = 12
+	label.LayoutOrder = 2
+	label.Parent = button
+
+	local btnScale = Instance.new("UIScale")
+	btnScale.Scale = 0.01
+	btnScale.Parent = button
+
+	TweenService:Create(btnScale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+
+	tabButtons[name] = {Button = button, Label = label}
 	return button
 end
 
-local function selectTab(name)
+local function selectTab(name, silent)
 	local buildFn = TabRegistry[name]
 	if not buildFn then
 		warn("[BatataHub] Aba não encontrada:", name)
 		return
 	end
 
-	for tabName, button in pairs(tabButtons) do
+	for tabName, data in pairs(tabButtons) do
 		if tabName == name then
-			TweenService:Create(button, TweenInfo.new(0.15), {BackgroundColor3 = ACCENT, TextColor3 = BLACK}):Play()
+			TweenService:Create(data.Button, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {BackgroundColor3 = ACCENT}):Play()
+			TweenService:Create(data.Label, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {TextColor3 = BLACK}):Play()
 		else
-			TweenService:Create(button, TweenInfo.new(0.15), {BackgroundColor3 = CARD, TextColor3 = SUBTEXT}):Play()
+			TweenService:Create(data.Button, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {BackgroundColor3 = CARD}):Play()
+			TweenService:Create(data.Label, TweenInfo.new(0.18, Enum.EasingStyle.Sine), {TextColor3 = SUBTEXT}):Play()
 		end
 	end
 
 	local page = createPage()
 	buildFn(page, ctx)
+
+	if not silent then
+		Save.data.lastTab = name
+		Save.write()
+	end
 end
-TabRegistry["HOME"] = function(page, ctx)
+
+-- Registro de aba (função `buildFn` já é uma função Lua)
+local function registerTab(name, buildFn, iconId, silent, sourceCode)
+	if TabRegistry[name] then
+		-- Se já existe, atualiza a referência
+		TabRegistry[name] = buildFn
+		return
+	end
+
+	TabRegistry[name] = buildFn
+	local btn = createTab(name, iconId)
+	btn.Activated:Connect(function()
+		playClick()
+		selectTab(name)
+	end)
+	addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
+
+	-- Salva o código-fonte do plugin (se fornecido)
+	if sourceCode and not silent then
+		savePlugin(name, sourceCode)
+	end
+
+	if not silent then
+		Save.data.enabledPlugins[name] = true
+		Save.write()
+	end
+end
+
+-- Restaura plugins salvos na inicialização
+local function restorePlugins()
+	local plugins = listPlugins()
+	for _, pluginName in ipairs(plugins) do
+		if pluginName == "HOME" then continue end
+
+		local src = loadPlugin(pluginName)
+		if src then
+			local fn = stringToFunc(src)
+			if fn then
+				local iconId = Save.data.enabledPlugins[pluginName .. "_icon"] or nil
+				registerTab(pluginName, fn, iconId, true, nil)
+			else
+				warn("[BatataHub] Falha ao compilar plugin:", pluginName)
+			end
+		end
+	end
+end
+
+-- // ------------------------------------------------------------
+-- // API EXTERNA DE REGISTRO (agora com suporte a ícones)
+-- // ------------------------------------------------------------
+local function RegisterExternalTab(password, tabData)
+	if password ~= CONFIG.ExternalPassword then
+		return false, "Senha inválida"
+	end
+
+	if type(tabData) ~= "table"
+		or type(tabData.Name) ~= "string"
+		or type(tabData.BuildContent) ~= "function" then
+		return false, "Dados inválidos"
+	end
+
+	if TabRegistry[tabData.Name] then
+		return false, "Aba já existe"
+	end
+
+	-- Serializa o BuildContent como string
+	local source = funcToString(tabData.BuildContent)
+
+	-- Se o executor suportar, salva a string direto; senão, usa fallback
+	registerTab(tabData.Name, tabData.BuildContent, tabData.IconId, false, source)
+
+	-- Salva o ícone para restaurar depois
+	if tabData.IconId then
+		Save.data.enabledPlugins[tabData.Name .. "_icon"] = tabData.IconId
+		Save.write()
+	end
+
+	print("[BatataHub] Plugin registrado:", tabData.Name, "| Ícone:", tabData.IconId or "nenhum")
+	return true
+end
+
+local api = Instance.new("BindableFunction")
+api.Name = "BatataHub_RegisterTab"
+api.Parent = ReplicatedStorage
+api.OnInvoke = function(password, tabData)
+	return RegisterExternalTab(password, tabData)
+end
+--// ============================================================
+--// BATATA HUB — HOME e Painel de Plugins
+--// ============================================================
+
+-- Conteúdo da aba HOME
+local function buildHome(page, ctx)
 	local welcome = Instance.new("TextLabel")
 	welcome.BackgroundTransparency = 1
 	welcome.Position = UDim2.fromOffset(9, 8)
@@ -352,7 +686,7 @@ TabRegistry["HOME"] = function(page, ctx)
 	friendTitle.Position = UDim2.fromOffset(7, 6)
 	friendTitle.Size = UDim2.new(1, -13, 0, 11)
 	friendTitle.Font = Enum.Font.GothamBold
-	friendTitle.Text = "AMIGOS"
+	friendTitle.Text = "NO SERVIDOR"
 	friendTitle.TextSize = 9
 	friendTitle.TextColor3 = ctx.colors.ACCENT
 	friendTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -382,86 +716,237 @@ TabRegistry["HOME"] = function(page, ctx)
 	end)
 end
 
-TabRegistry["PLAYER"] = function(page, ctx)
-	local title = Instance.new("TextLabel")
-	title.BackgroundTransparency = 1
-	title.Position = UDim2.fromOffset(9, 8)
-	title.Size = UDim2.new(1, -18, 0, 17)
-	title.Font = Enum.Font.GothamBlack
-	title.Text = "PLAYER"
-	title.TextSize = 14
-	title.TextColor3 = ctx.colors.TEXT
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Parent = page
+registerTab("HOME", buildHome, nil, true, nil)
 
-	local card = Instance.new("Frame")
-	card.Size = UDim2.new(1, -18, 0, 55)
-	card.Position = UDim2.fromOffset(9, 32)
-	card.BackgroundColor3 = ctx.colors.CARD
-	card.Parent = page
-	Instance.new("UICorner", card).CornerRadius = UDim.new(0, 5)
-
-	local info = Instance.new("TextLabel")
-	info.BackgroundTransparency = 1
-	info.Position = UDim2.fromOffset(8, 7)
-	info.Size = UDim2.new(1, -15, 1, -13)
-	info.Font = Enum.Font.Gotham
-	info.TextSize = 10
-	info.TextColor3 = ctx.colors.TEXT
-	info.TextXAlignment = Enum.TextXAlignment.Left
-	info.TextYAlignment = Enum.TextYAlignment.Top
-	info.Text = "Nome: " .. ctx.player.Name
-		.. "\nDisplayName: " .. ctx.player.DisplayName
-		.. "\nUserId: " .. ctx.player.UserId
-	info.Parent = card
+-- Seleciona aba inicial
+local initialTab = "HOME"
+if Save.data.lastTab and TabRegistry[Save.data.lastTab] then
+	initialTab = Save.data.lastTab
 end
+selectTab(initialTab, true)
 
-local homeButton = createTab("HOME")
-homeButton.Activated:Connect(function() selectTab("HOME") end)
+-- Painel de Plugins (dentro do ⚙)
+local settingsOpen = false
 
-local playerButton = createTab("PLAYER")
-playerButton.Activated:Connect(function() selectTab("PLAYER") end)
+local function showPluginsPanel()
+	if settingsOpen then return end
+	settingsOpen = true
 
-selectTab("HOME")
+	local page = createPage()
 
--- =========================================================
--- SISTEMA DE ABAS EXTERNAS V2
--- =========================================================
+	local titleLbl = Instance.new("TextLabel")
+	titleLbl.BackgroundTransparency = 1
+	titleLbl.Position = UDim2.fromOffset(9, 6)
+	titleLbl.Size = UDim2.new(1, -18, 0, 16)
+	titleLbl.Font = Enum.Font.GothamBlack
+	titleLbl.Text = "PLUGINS SALVOS"
+	titleLbl.TextSize = 12
+	titleLbl.TextColor3 = TEXT
+	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+	titleLbl.Parent = page
 
-local function RegisterExternalTab(password, tabData)
-	if password ~= CONFIG.ExternalPassword then
-		warn("[BatataHub] Senha inválida para registrar aba externa.")
-		return false, "Senha inválida"
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -14, 1, -80)
+	scroll.Position = UDim2.fromOffset(7, 26)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.ScrollBarImageColor3 = ACCENT
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = page
+
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 4)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = scroll
+
+	local plugins = listPlugins()
+	if #plugins == 0 then
+		local empty = Instance.new("TextLabel")
+		empty.BackgroundTransparency = 1
+		empty.Size = UDim2.new(1, -8, 0, 20)
+		empty.Font = Enum.Font.Gotham
+		empty.Text = "Nenhum plugin salvo ainda."
+		empty.TextSize = 10
+		empty.TextColor3 = SUBTEXT
+		empty.TextXAlignment = Enum.TextXAlignment.Left
+		empty.Parent = scroll
+	else
+		for _, pluginName in ipairs(plugins) do
+			if pluginName == "HOME" then continue end
+
+			local row = Instance.new("Frame")
+			row.Size = UDim2.new(1, -8, 0, 26)
+			row.BackgroundColor3 = CARD
+			row.BorderSizePixel = 0
+			row.Parent = scroll
+			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 5)
+
+			local nameLbl = Instance.new("TextLabel")
+			nameLbl.BackgroundTransparency = 1
+			nameLbl.Position = UDim2.fromOffset(8, 0)
+			nameLbl.Size = UDim2.new(1, -80, 1, 0)
+			nameLbl.Font = Enum.Font.GothamBold
+			nameLbl.Text = pluginName
+			nameLbl.TextSize = 10
+			nameLbl.TextColor3 = TEXT
+			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+			nameLbl.Parent = row
+
+			local runBtn = Instance.new("TextButton")
+			runBtn.AnchorPoint = Vector2.new(1, 0.5)
+			runBtn.Position = UDim2.new(1, -6, 0.5, 0)
+			runBtn.Size = UDim2.fromOffset(28, 16)
+			runBtn.BackgroundColor3 = ACCENT
+			runBtn.Text = "▶"
+			runBtn.Font = Enum.Font.GothamBold
+			runBtn.TextSize = 10
+			runBtn.TextColor3 = BLACK
+			runBtn.AutoButtonColor = false
+			runBtn.Parent = row
+			Instance.new("UICorner", runBtn).CornerRadius = UDim.new(0, 4)
+
+			local delBtn = Instance.new("TextButton")
+			delBtn.AnchorPoint = Vector2.new(1, 0.5)
+			delBtn.Position = UDim2.new(1, -38, 0.5, 0)
+			delBtn.Size = UDim2.fromOffset(28, 16)
+			delBtn.BackgroundColor3 = CARD
+			delBtn.Text = "✕"
+			delBtn.Font = Enum.Font.GothamBold
+			delBtn.TextSize = 10
+			delBtn.TextColor3 = Color3.fromRGB(200, 80, 80)
+			delBtn.AutoButtonColor = false
+			delBtn.Parent = row
+			Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 4)
+
+			runBtn.Activated:Connect(function()
+				playClick()
+				local src = loadPlugin(pluginName)
+				if src then
+					local fn = stringToFunc(src)
+					if fn then
+						pcall(fn)
+						print("[BatataHub] Plugin executado:", pluginName)
+					end
+				end
+			end)
+
+			delBtn.Activated:Connect(function()
+				playClick()
+				deletePlugin(pluginName)
+				Save.data.enabledPlugins[pluginName] = nil
+				Save.data.enabledPlugins[pluginName .. "_icon"] = nil
+				Save.write()
+				row:Destroy()
+			end)
+		end
 	end
 
-	if type(tabData) ~= "table"
-		or type(tabData.Name) ~= "string"
-		or type(tabData.BuildContent) ~= "function" then
-		warn("[BatataHub] Dados de aba externa inválidos.")
-		return false, "Dados inválidos"
-	end
+	-- Botão de fundo
+	local bgBtn = Instance.new("TextButton")
+	bgBtn.Size = UDim2.new(1, -18, 0, 22)
+	bgBtn.Position = UDim2.new(0, 9, 1, -28)
+	bgBtn.BackgroundColor3 = CARD
+	bgBtn.Text = "🎨 Fundo"
+	bgBtn.Font = Enum.Font.GothamBold
+	bgBtn.TextSize = 10
+	bgBtn.TextColor3 = SUBTEXT
+	bgBtn.AutoButtonColor = false
+	bgBtn.Parent = page
+	Instance.new("UICorner", bgBtn).CornerRadius = UDim.new(0, 5)
 
-	if TabRegistry[tabData.Name] then
-		warn("[BatataHub] Já existe uma aba com esse nome:", tabData.Name)
-		return false, "Aba já existe"
-	end
-
-	TabRegistry[tabData.Name] = tabData.BuildContent
-
-	local btn = createTab(tabData.Name)
-	btn.Activated:Connect(function() selectTab(tabData.Name) end)
-
-	print("[BatataHub] Aba externa registrada:", tabData.Name)
-	return true
+	bgBtn.Activated:Connect(function()
+		playClick()
+		settingsOpen = false
+		showBackgroundSettings()
+	end)
 end
 
-local api = Instance.new("BindableFunction")
-api.Name = "BatataHub_RegisterTab"
-api.Parent = ReplicatedStorage
+-- Painel de fundo
+local function showBackgroundSettings()
+	if settingsOpen then return end
+	settingsOpen = true
 
-api.OnInvoke = function(password, tabData)
-	return RegisterExternalTab(password, tabData)
+	local page = createPage()
+
+	local titleLbl = Instance.new("TextLabel")
+	titleLbl.BackgroundTransparency = 1
+	titleLbl.Position = UDim2.fromOffset(9, 8)
+	titleLbl.Size = UDim2.new(1, -18, 0, 17)
+	titleLbl.Font = Enum.Font.GothamBlack
+	titleLbl.Text = "PLANO DE FUNDO"
+	titleLbl.TextSize = 13
+	titleLbl.TextColor3 = TEXT
+	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+	titleLbl.Parent = page
+
+	local input = Instance.new("TextBox")
+	input.Size = UDim2.new(1, -18, 0, 26)
+	input.Position = UDim2.fromOffset(9, 34)
+	input.BackgroundColor3 = CARD
+	input.Text = Save.data.backgroundId and tostring(Save.data.backgroundId) or ""
+	input.PlaceholderText = "ID do adesivo"
+	input.Font = Enum.Font.Gotham
+	input.TextSize = 11
+	input.TextColor3 = TEXT
+	input.ClearTextOnFocus = false
+	input.Parent = page
+	Instance.new("UICorner", input).CornerRadius = UDim.new(0, 5)
+
+	local confirmBtn = Instance.new("TextButton")
+	confirmBtn.Size = UDim2.new(1, -18, 0, 26)
+	confirmBtn.Position = UDim2.fromOffset(9, 68)
+	confirmBtn.BackgroundColor3 = ACCENT
+	confirmBtn.Text = "Confirmar"
+	confirmBtn.Font = Enum.Font.GothamBold
+	confirmBtn.TextSize = 11
+	confirmBtn.TextColor3 = BLACK
+	confirmBtn.AutoButtonColor = false
+	confirmBtn.Parent = page
+	Instance.new("UICorner", confirmBtn).CornerRadius = UDim.new(0, 5)
+
+	local backBtn = Instance.new("TextButton")
+	backBtn.Size = UDim2.new(1, -18, 0, 22)
+	backBtn.Position = UDim2.fromOffset(9, 100)
+	backBtn.BackgroundColor3 = CARD
+	backBtn.Text = "Voltar"
+	backBtn.Font = Enum.Font.Gotham
+	backBtn.TextSize = 10
+	backBtn.TextColor3 = SUBTEXT
+	backBtn.AutoButtonColor = false
+	backBtn.Parent = page
+	Instance.new("UICorner", backBtn).CornerRadius = UDim.new(0, 5)
+
+	confirmBtn.Activated:Connect(function()
+		playClick()
+		local id = input.Text:match("%d+")
+		if id then
+			bgImage.Image = "rbxassetid://" .. id
+			TweenService:Create(bgImage, TweenInfo.new(0.4, Enum.EasingStyle.Sine), {ImageTransparency = 0.8}):Play()
+			Save.data.backgroundId = tonumber(id)
+			Save.write()
+		end
+		settingsOpen = false
+		selectTab(Save.data.lastTab or "HOME", true)
+	end)
+
+	backBtn.Activated:Connect(function()
+		playClick()
+		settingsOpen = false
+		showPluginsPanel()
+	end)
 end
+
+gear.Activated:Connect(function()
+	playClick()
+	if settingsOpen then return end
+	showPluginsPanel()
+end)
+--// ============================================================
+--// BATATA HUB — Abertura, Fechamento, Arrasto e Intro
+--// ============================================================
+
 local opened = false
 local busy = false
 
@@ -471,21 +956,18 @@ local function openHub()
 	opened = true
 
 	panel.Visible = true
-	panel.Size = UDim2.fromOffset(PANEL_CLOSED.X.Offset * 0.7, PANEL_CLOSED.Y.Offset * 0.7)
+	panel.Size = UDim2.fromOffset(PANEL_CLOSED.X.Offset * 0.5, PANEL_CLOSED.Y.Offset * 0.5)
 	panel.BackgroundTransparency = 1
 	panelStroke.Transparency = 1
 
 	local sizeTween = TweenService:Create(
-		panel,
-		TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		panel, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 		{Size = PANEL_OPEN, BackgroundTransparency = 0}
 	)
-	local strokeTween = TweenService:Create(panelStroke, TweenInfo.new(0.4), {Transparency = 0})
+	TweenService:Create(panelStroke, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {Transparency = 0}):Play()
 
 	sizeTween:Play()
-	strokeTween:Play()
 	sizeTween.Completed:Wait()
-
 	busy = false
 end
 
@@ -495,41 +977,33 @@ local function closeHub()
 	opened = false
 
 	local tween = TweenService:Create(
-		panel,
-		TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-		{Size = UDim2.fromOffset(PANEL_CLOSED.X.Offset * 0.7, PANEL_CLOSED.Y.Offset * 0.7), BackgroundTransparency = 1}
+		panel, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+		{Size = UDim2.fromOffset(PANEL_CLOSED.X.Offset * 0.5, PANEL_CLOSED.Y.Offset * 0.5), BackgroundTransparency = 1}
 	)
-	TweenService:Create(panelStroke, TweenInfo.new(0.14), {Transparency = 1}):Play()
+	TweenService:Create(panelStroke, TweenInfo.new(0.18), {Transparency = 1}):Play()
 
 	tween:Play()
 	tween.Completed:Wait()
-
 	panel.Visible = false
 	busy = false
 end
 
 floating.Activated:Connect(function()
+	playClick()
 	pulseButton()
-	if opened then
-		closeHub()
-	else
-		openHub()
-	end
+	if opened then closeHub() else openHub() end
 end)
 
 close.Activated:Connect(function()
+	playClick()
 	closeHub()
 end)
 
 local draggingButton = false
-local dragStart
-local buttonStart
+local dragStart, buttonStart
 
 floating.InputBegan:Connect(function(input)
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1
-		and input.UserInputType ~= Enum.UserInputType.Touch then
-		return
-	end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
 	draggingButton = true
 	dragStart = input.Position
 	buttonStart = floating.Position
@@ -537,33 +1011,22 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if not draggingButton then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement
-		and input.UserInputType ~= Enum.UserInputType.Touch then
-		return
-	end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
 	local delta = input.Position - dragStart
-	floating.Position = UDim2.new(
-		buttonStart.X.Scale, buttonStart.X.Offset + delta.X,
-		buttonStart.Y.Scale, buttonStart.Y.Offset + delta.Y
-	)
+	floating.Position = UDim2.new(buttonStart.X.Scale, buttonStart.X.Offset + delta.X, buttonStart.Y.Scale, buttonStart.Y.Offset + delta.Y)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch then
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		draggingButton = false
 	end
 end)
 
 local draggingPanel = false
-local panelDragStart
-local panelStart
+local panelDragStart, panelStart
 
 header.InputBegan:Connect(function(input)
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1
-		and input.UserInputType ~= Enum.UserInputType.Touch then
-		return
-	end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
 	draggingPanel = true
 	panelDragStart = input.Position
 	panelStart = panel.Position
@@ -571,22 +1034,178 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if not draggingPanel then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement
-		and input.UserInputType ~= Enum.UserInputType.Touch then
-		return
-	end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
 	local delta = input.Position - panelDragStart
-	panel.Position = UDim2.new(
-		panelStart.X.Scale, panelStart.X.Offset + delta.X,
-		panelStart.Y.Scale, panelStart.Y.Offset + delta.Y
-	)
+	panel.Position = UDim2.new(panelStart.X.Scale, panelStart.X.Offset + delta.X, panelStart.Y.Scale, panelStart.Y.Offset + delta.Y)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch then
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		draggingPanel = false
 	end
 end)
 
-print("[Batata Hub] Interface V2 carregada com sucesso!")
+-- Restaura plugins depois de tudo montado
+task.spawn(function()
+	task.wait(0.5)
+	restorePlugins()
+end)
+
+-- Intro
+local function spawnFallTrail(device)
+	task.spawn(function()
+		for i = 1, 5 do
+			if not device.Parent then break end
+			local ghost = device:Clone()
+			ghost.ZIndex = device.ZIndex - 1
+			ghost.ImageTransparency = 0.5
+			ghost.Parent = gui
+			TweenService:Create(ghost, TweenInfo.new(0.3), {ImageTransparency = 1}):Play()
+			Debris:AddItem(ghost, 0.35)
+			task.wait(0.05)
+		end
+	end)
+end
+
+local function PlayIntroSequence()
+	floating.Visible = false
+
+	local spawnCenter = UDim2.new(
+		0, floating.Position.X.Offset + floating.Size.X.Offset / 2,
+		0, floating.Position.Y.Offset + floating.Size.Y.Offset / 2
+	)
+
+	local portal = Instance.new("ImageLabel")
+	portal.BackgroundTransparency = 1
+	portal.AnchorPoint = Vector2.new(0.5, 0.5)
+	portal.Position = spawnCenter
+	portal.Size = UDim2.fromOffset(BUTTON_SIZE * 1.7, BUTTON_SIZE * 1.7)
+	portal.Image = "rbxassetid://" .. tostring(CONFIG.PortalIconId)
+	portal.ZIndex = 200
+	portal.Parent = gui
+
+	local portalScale = Instance.new("UIScale")
+	portalScale.Scale = 0.01
+	portalScale.Parent = portal
+
+	playSound(CONFIG.PortalAppearSoundId)
+	tweenAsync(portalScale, TweenInfo.new(1.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1})
+
+	local spinTween = TweenService:Create(portal, TweenInfo.new(6, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), {Rotation = 360})
+	spinTween:Play()
+
+	local head = Instance.new("ImageLabel")
+	head.BackgroundTransparency = 1
+	head.AnchorPoint = Vector2.new(0.5, 0.5)
+	head.Position = spawnCenter
+	head.Size = UDim2.fromOffset(BUTTON_SIZE * 1.1, BUTTON_SIZE * 1.1)
+	head.Image = "rbxassetid://" .. tostring(CONFIG.RickHeadIconId)
+	head.ImageTransparency = 1
+	head.ZIndex = 201
+	head.Parent = gui
+
+	local headScale = Instance.new("UIScale")
+	headScale.Scale = 0.01
+	headScale.Parent = head
+
+	TweenService:Create(head, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {ImageTransparency = 0}):Play()
+	tweenAsync(headScale, TweenInfo.new(1.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1})
+
+	playSound(CONFIG.RickAppearSoundId)
+	task.wait(1)
+
+	TweenService:Create(head, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency = 1}):Play()
+	tweenAsync(headScale, TweenInfo.new(1.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Scale = 0.01})
+	head:Destroy()
+
+	local device = Instance.new("ImageLabel")
+	device.BackgroundTransparency = 1
+	device.AnchorPoint = Vector2.new(0.5, 0.5)
+	device.Position = spawnCenter
+	device.Size = UDim2.fromOffset(BUTTON_SIZE * 1.35, BUTTON_SIZE * 1.35)
+	device.Image = "rbxassetid://" .. tostring(CONFIG.OmegaDeviceIconId)
+	device.ZIndex = 201
+	device.Parent = gui
+
+	local deviceScale = Instance.new("UIScale")
+	deviceScale.Scale = 0.2
+	deviceScale.Parent = device
+	TweenService:Create(deviceScale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+
+	spawnFallTrail(device)
+
+	local fallTarget = UDim2.new(0, spawnCenter.X.Offset, 1, -40)
+	tweenAsync(device, TweenInfo.new(0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = fallTarget, Rotation = 25})
+	tweenAsync(device, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = fallTarget - UDim2.fromOffset(0, 14), Rotation = 10})
+	tweenAsync(device, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = fallTarget, Rotation = 0})
+
+	tweenAsync(portal, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Rotation = portal.Rotation + 180})
+	spinTween:Cancel()
+	tweenAsync(portalScale, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Scale = 0.01})
+	portal:Destroy()
+
+	task.wait(0.15)
+
+	local flash = Instance.new("Frame")
+	flash.AnchorPoint = Vector2.new(0.5, 0.5)
+	flash.Position = device.Position
+	flash.Size = UDim2.fromOffset(6, 6)
+	flash.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	flash.BorderSizePixel = 0
+	flash.ZIndex = 205
+	flash.Parent = gui
+	Instance.new("UICorner", flash).CornerRadius = UDim.new(1, 0)
+	TweenService:Create(flash, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.fromOffset(170, 170), BackgroundTransparency = 1,
+	}):Play()
+
+	local shockwave = Instance.new("Frame")
+	shockwave.AnchorPoint = Vector2.new(0.5, 0.5)
+	shockwave.Position = device.Position
+	shockwave.Size = UDim2.fromOffset(10, 10)
+	shockwave.BackgroundTransparency = 1
+	shockwave.ZIndex = 203
+	shockwave.Parent = gui
+	Instance.new("UICorner", shockwave).CornerRadius = UDim.new(1, 0)
+	local shockStroke = Instance.new("UIStroke", shockwave)
+	shockStroke.Color = ACCENT
+	shockStroke.Thickness = 4
+	TweenService:Create(shockwave, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(220, 220)}):Play()
+	TweenService:Create(shockStroke, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Thickness = 0, Transparency = 1}):Play()
+	Debris:AddItem(shockwave, 0.6)
+
+	for i = 1, 18 do
+		local spark = Instance.new("Frame")
+		spark.AnchorPoint = Vector2.new(0.5, 0.5)
+		spark.Position = device.Position
+		spark.Size = UDim2.fromOffset(6, 6)
+		spark.BackgroundColor3 = (i % 2 == 0) and ACCENT or Color3.fromRGB(255, 255, 255)
+		spark.BorderSizePixel = 0
+		spark.ZIndex = 204
+		spark.Parent = gui
+		Instance.new("UICorner", spark).CornerRadius = UDim.new(1, 0)
+
+		local angle = (i / 18) * math.pi * 2
+		local distance = 55 + math.random(0, 35)
+
+		TweenService:Create(spark, TweenInfo.new(0.45 + math.random() * 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = device.Position + UDim2.fromOffset(math.cos(angle) * distance, math.sin(angle) * distance),
+			Size = UDim2.fromOffset(1, 1),
+			BackgroundTransparency = 1,
+		}):Play()
+		Debris:AddItem(spark, 1)
+	end
+
+	TweenService:Create(device, TweenInfo.new(0.1), {ImageTransparency = 1}):Play()
+	task.wait(0.55)
+	device:Destroy()
+	flash:Destroy()
+
+	floating.Visible = true
+	floatingScale.Scale = 0.01
+	TweenService:Create(floatingScale, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+end
+
+task.spawn(PlayIntroSequence)
+
+print("[Batata Hub] Interface carregada com sistema de plugins ativo.")
