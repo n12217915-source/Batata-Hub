@@ -679,10 +679,16 @@ local function RegisterExternalTab(password, tabData)
 		buildFn = tabData.BuildContent
 		sourceCode = funcToString(tabData.BuildContent)
 	elseif type(tabData.BuildContent) == "string" then
-		local fn = loadstring(tabData.BuildContent)
-		if fn then
-			buildFn = fn
-			sourceCode = tabData.BuildContent
+		local chunk = loadstring(tabData.BuildContent)
+		if chunk then
+			local ok, result = pcall(chunk)
+			if ok and type(result) == "function" then
+				buildFn = result
+				sourceCode = tabData.BuildContent
+			elseif ok then
+				buildFn = chunk
+				sourceCode = tabData.BuildContent
+			end
 		end
 	end
 
@@ -1064,16 +1070,26 @@ task.spawn(function()
 			continue
 		end
 
-		local fn, err = loadstring(src)
+		local buildFn = nil
+		local chunk = loadstring(src)
 
-		if not fn then
-			warn("[BatataHub] Falha ao compilar plugin " .. info.pluginId .. ": " .. tostring(err))
+		if chunk then
+			local ok, result = pcall(chunk)
+			if ok and type(result) == "function" then
+				buildFn = result
+			elseif ok then
+				buildFn = chunk
+			end
+		end
+
+		if not buildFn then
+			warn("[BatataHub] Falha ao compilar plugin " .. info.pluginId)
 			failed = failed + 1
 			continue
 		end
 
 		TabRegistry[info.pluginId] = {
-			buildFn = fn,
+			buildFn = buildFn,
 			name = info.name,
 			iconId = info.iconId,
 		}
@@ -1261,4 +1277,4 @@ end
 
 task.spawn(PlayIntroSequence)
 
-print("[Batata Hub] Interface carregada com sucesso!")
+print("[Batata Hub] Interface carregada com sucesso!"
