@@ -1277,4 +1277,4 @@ end
 
 task.spawn(PlayIntroSequence)
 
-print("[Batata Hub] Interface carregada com sucesso!"
+print("[Batata Hub] Interface carregada com sucesso!")
