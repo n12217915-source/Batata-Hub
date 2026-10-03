@@ -38,6 +38,7 @@ local CONFIG = {
 	PortalAppearSoundId = "rbxassetid://71852278135255",
 	RickAppearSoundId   = "rbxassetid://134634382299700",
 	PanicKey = Enum.KeyCode.RightControl,
+	DiscordLink = "https://discord.gg/guySypaQAp",
 }
 
 local SaveConfig = (function()
@@ -256,7 +257,8 @@ local function clampToViewport(posOffset, objSize)
 	return Vector2.new(x, y)
 end
 
-local function isMostlyOffscreen(posOffset, objSize)
+local function isMostlyOffscreen(posOffset, objSize, threshold)
+	threshold = threshold or 0.85
 	local vp = workspace.CurrentCamera.ViewportSize
 	local totalPx = objSize.X * objSize.Y
 	if totalPx <= 0 then return false end
@@ -267,8 +269,85 @@ local function isMostlyOffscreen(posOffset, objSize)
 	local visibleW = math.max(0, right - left)
 	local visibleH = math.max(0, bottom - top)
 	local visiblePx = visibleW * visibleH
-	return (visiblePx / totalPx) <= 0.30
+	return (visiblePx / totalPx) <= (1 - threshold)
 end
+
+local VirtualUser = game:GetService("VirtualUser")
+local AntiAFK = (function()
+	local active = true
+	local interval = 60
+
+	task.spawn(function()
+		while active do
+			task.wait(interval)
+			pcall(function()
+				VirtualUser:CaptureController()
+				VirtualUser:ClickButton2(Vector2.new())
+			end)
+		end
+	end)
+
+	return {
+		toggle = function(v) active = v end,
+		isActive = function() return active end,
+		setInterval = function(n) interval = math.clamp(n, 10, 300) end,
+	}
+end)()
+
+local AntiCheatDetector = (function()
+	local KNOWN_INSTANCES = {
+		"Rayfield", "OrionLib", "Kavo", "Fluent", "Linoria",
+		"WindUI", "Sirius", "FakeKavo", "XenoUI", "Vape",
+		"Rspy", "Dex", "SimpleSpy", "InfiniteYield", "IY",
+	}
+	local SUSPICIOUS_HOOKS = {
+		"hookmetamethod", "hookfunction", "getrawmetatable",
+		"setreadonly", "getgenv", "getrenv", "getreg",
+	}
+
+	local detected = false
+	local listeners = {}
+
+	local function report(name)
+		if detected then return end
+		detected = true
+		for _, cb in ipairs(listeners) do
+			task.spawn(cb, name)
+		end
+	end
+
+	local function watchContainer(container)
+		container.DescendantAdded:Connect(function(inst)
+			local name = inst.Name
+			for _, sus in ipairs(KNOWN_INSTANCES) do
+				if name:lower():find(sus:lower(), 1, true) then
+					report("Instância suspeita: " .. name)
+					return
+				end
+			end
+			if inst:IsA("LocalScript") then
+				local src = ""
+				pcall(function()
+					src = inst.Source or ""
+				end)
+				for _, hk in ipairs(SUSPICIOUS_HOOKS) do
+					if src:find(hk, 1, true) then
+						report("Hook suspeito: " .. hk .. " em " .. name)
+						return
+					end
+				end
+			end
+		end)
+	end
+
+	pcall(function() watchContainer(playerGui) end)
+	pcall(function() watchContainer(game:GetService("CoreGui")) end)
+
+	return {
+		isDetected = function() return detected end,
+		onDetect = function(cb) table.insert(listeners, cb) end,
+	}
+end)()
 
 local gui = Instance.new("ScreenGui")
 gui.Name            = "BatataHub"
@@ -276,7 +355,6 @@ gui.ResetOnSpawn    = false
 gui.IgnoreGuiInset  = true
 gui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
 gui.Parent          = playerGui
-
 local notifyContainer = Instance.new("Frame")
 notifyContainer.Name = "Notifications"
 notifyContainer.AnchorPoint = Vector2.new(1, 1)
@@ -550,6 +628,14 @@ bgImage.ZIndex = 1
 bgImage.Image = ""
 bgImage.Parent = panel
 
+task.spawn(function()
+	local bg = SaveConfig.get("ui.bg")
+	if bg then
+		bgImage.Image = "rbxassetid://" .. tostring(bg)
+		bgImage.ImageTransparency = 0.8
+	end
+end)
+
 local header = Instance.new("Frame")
 header.Name = "Header"
 header.Size = UDim2.new(1,0,0,34)
@@ -724,7 +810,8 @@ local function createPage()
 	page.ZIndex = 11
 	page.Parent = content
 	activePage = page
-	TweenService:Create(page, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+
+	TweenService:Create(page, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
 		GroupTransparency = 0, Position = UDim2.fromScale(0, 0),
 	}):Play()
 	return page
@@ -792,7 +879,6 @@ local function selectTab(name)
 	local page = createPage()
 	buildFn(page, ctx)
 end
-
 local function makeToggle(parent, text, y, initial, onChange)
 	local btn = Instance.new("TextButton")
 	btn.Position = UDim2.fromOffset(9, y)
@@ -908,10 +994,41 @@ local function makeScroll(parent, canvasHeight)
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 4
 	scroll.CanvasSize = UDim2.new(0, 0, 0, canvasHeight or 420)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.ElasticBehavior = Enum.ElasticBehavior.Never
+	scroll.ScrollBarImageColor3 = ACCENT
 	scroll.ZIndex = 12
 	scroll.Parent = parent
+
+	-- Limita o scroll pra parar exatamente no último item
+	scroll:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(function()
+		local windowH = scroll.AbsoluteWindowSize.Y
+		local contentH = scroll.AbsoluteCanvasSize.Y
+		if contentH <= windowH then
+			scroll.CanvasPosition = Vector2.new(0, 0)
+		else
+			local maxY = contentH - windowH
+			if scroll.CanvasPosition.Y > maxY then
+				scroll.CanvasPosition = Vector2.new(0, maxY)
+			end
+		end
+	end)
+
+	scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+		local windowH = scroll.AbsoluteWindowSize.Y
+		local contentH = scroll.AbsoluteCanvasSize.Y
+		local maxY = math.max(0, contentH - windowH)
+		if scroll.CanvasPosition.Y > maxY then
+			scroll.CanvasPosition = Vector2.new(0, maxY)
+		elseif scroll.CanvasPosition.Y < 0 then
+			scroll.CanvasPosition = Vector2.new(0, 0)
+		end
+	end)
+
 	return scroll
 end
+
 TabRegistry["HOME"] = function(page, ctx)
 	local welcome = Instance.new("TextLabel")
 	welcome.BackgroundTransparency = 1
@@ -980,7 +1097,6 @@ TabRegistry["HOME"] = function(page, ctx)
 		end
 	end)
 end
-
 TabRegistry["AIM LOCK"] = (function()
 	local state = {
 		Enabled      = SaveConfig.register("aim.enabled",    false),
@@ -1529,6 +1645,9 @@ TabRegistry["HITBOX"] = (function()
 		makeSlider(scroll, "Range No-Lag", 152, 10, 500, state.NoLagRange, function(v) state.NoLagRange = v; SaveConfig.set("hb.range", v) end)
 	end
 end)()
+local TAB_ORDER = { "HOME", "AIM LOCK", "ESP", "PLAYER", "HITBOX" }
+local LOAD_DELAY = 2.5
+
 local function makeTab(name, iconId)
 	local btn = createTab(name, iconId)
 	btn.Activated:Connect(function() playClick(); selectTab(name) end)
@@ -1536,50 +1655,23 @@ local function makeTab(name, iconId)
 	return btn
 end
 
-makeTab("HOME",     CONFIG.HomeIconId)
-makeTab("AIM LOCK", nil)
-makeTab("ESP",      nil)
-makeTab("PLAYER",   nil)
-makeTab("HITBOX",   nil)
-selectTab("HOME")
-
 task.spawn(function()
-	if CONFIG.VIPGamePassId == 0 then return end
-	local ok, owns = pcall(function()
-		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, CONFIG.VIPGamePassId)
-	end)
-	if ok and owns then
-		local vipTag = Instance.new("TextLabel")
-		vipTag.BackgroundColor3 = ACCENT
-		vipTag.Size = UDim2.fromOffset(24, 11)
-		vipTag.Position = UDim2.new(0, 36 + username.TextBounds.X + 4, 0, 18)
-		vipTag.Font = Enum.Font.GothamBlack
-		vipTag.Text = "VIP"
-		vipTag.TextSize = 7
-		vipTag.TextColor3 = BLACK
-		vipTag.ZIndex = 12
-		vipTag.Parent = header
-		Instance.new("UICorner", vipTag).CornerRadius = UDim.new(0, 3)
+	for i, name in ipairs(TAB_ORDER) do
+		local iconId = (name == "HOME") and CONFIG.HomeIconId or nil
+		makeTab(name, iconId)
+		Notify(name .. " carregada (" .. i .. "/" .. #TAB_ORDER .. ")", 2)
+		if i < #TAB_ORDER then
+			task.wait(LOAD_DELAY)
+		end
 	end
+	task.wait(0.4)
+	selectTab("HOME")
+	Notify("Batata Hub carregado!", 3)
 end)
 
-local function RegisterExternalTab(password, tabData)
-	if password ~= CONFIG.ExternalPassword then return false, "Senha inválida" end
-	if type(tabData) ~= "table" or type(tabData.Name) ~= "string" or type(tabData.BuildContent) ~= "function" then
-		return false, "Dados inválidos"
-	end
-	if TabRegistry[tabData.Name] then return false, "Aba já existe" end
-	TabRegistry[tabData.Name] = tabData.BuildContent
-	local btn = createTab(tabData.Name, tabData.IconId)
-	btn.Activated:Connect(function() playClick(); selectTab(tabData.Name) end)
-	addHover(btn, CARD, Color3.fromRGB(38, 38, 38))
-	return true
-end
-
-local api = Instance.new("BindableFunction")
-api.Name = "BatataHub_RegisterTab"
-api.Parent = ReplicatedStorage
-api.OnInvoke = function(password, tabData) return RegisterExternalTab(password, tabData) end
+AntiCheatDetector.onDetect(function(reason)
+	Notify("Anti-Cheat: " .. reason, 5)
+end)
 
 local settingsOpen = false
 local function showBackgroundSettings()
@@ -1603,7 +1695,7 @@ local function showBackgroundSettings()
 	input.Position = UDim2.fromOffset(9, 36)
 	input.BackgroundColor3 = CARD
 	input.Text = ""
-	input.PlaceholderText = "ID do adesivo"
+	input.PlaceholderText = "ID do adesivo (plano de fundo)"
 	input.Font = Enum.Font.Gotham
 	input.TextSize = 11
 	input.TextColor3 = TEXT
@@ -1615,7 +1707,7 @@ local function showBackgroundSettings()
 	confirmBtn.Size = UDim2.new(1, -18, 0, 26)
 	confirmBtn.Position = UDim2.fromOffset(9, 70)
 	confirmBtn.BackgroundColor3 = ACCENT
-	confirmBtn.Text = "Confirmar"
+	confirmBtn.Text = "Salvar plano de fundo"
 	confirmBtn.Font = Enum.Font.GothamBold
 	confirmBtn.TextSize = 11
 	confirmBtn.TextColor3 = BLACK
@@ -1631,7 +1723,7 @@ local function showBackgroundSettings()
 			bgImage.Image = "rbxassetid://" .. id
 			SaveConfig.set("ui.bg", id)
 			TweenService:Create(bgImage, TweenInfo.new(0.4, Enum.EasingStyle.Sine), {ImageTransparency = 0.8}):Play()
-			Notify("Plano de fundo atualizado!", 3)
+			Notify("Plano de fundo salvo!", 3)
 		else
 			Notify("ID inválido.", 2)
 		end
@@ -1639,11 +1731,38 @@ local function showBackgroundSettings()
 		selectTab("HOME")
 	end)
 
+	local discordBtn = Instance.new("TextButton")
+	discordBtn.Size = UDim2.new(1, -18, 0, 26)
+	discordBtn.Position = UDim2.fromOffset(9, 104)
+	discordBtn.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+	discordBtn.Text = "Discord — clique para copiar"
+	discordBtn.Font = Enum.Font.GothamBold
+	discordBtn.TextSize = 11
+	discordBtn.TextColor3 = TEXT
+	discordBtn.AutoButtonColor = false
+	discordBtn.Parent = page
+	Instance.new("UICorner", discordBtn).CornerRadius = UDim.new(0, 5)
+	addHover(discordBtn, Color3.fromRGB(88, 101, 242), Color3.fromRGB(115, 128, 255))
+
+	discordBtn.Activated:Connect(function()
+		playClick()
+		local ok = pcall(function()
+			if type(setclipboard) == "function" then
+				setclipboard(CONFIG.DiscordLink)
+			end
+		end)
+		if ok then
+			Notify("Link do Discord copiado!", 3)
+		else
+			Notify("Não foi possível copiar. Link: " .. CONFIG.DiscordLink, 5)
+		end
+	end)
+
 	local restoreBtn = Instance.new("TextButton")
 	restoreBtn.Size = UDim2.new(1, -18, 0, 26)
-	restoreBtn.Position = UDim2.fromOffset(9, 104)
+	restoreBtn.Position = UDim2.fromOffset(9, 138)
 	restoreBtn.BackgroundColor3 = CARD
-	restoreBtn.Text = "Restaurar posição"
+	restoreBtn.Text = "Restaurar posições"
 	restoreBtn.Font = Enum.Font.GothamBold
 	restoreBtn.TextSize = 11
 	restoreBtn.TextColor3 = TEXT
@@ -1677,6 +1796,7 @@ resetBtn.Activated:Connect(function()
 	SaveConfig.reset()
 	Notify("Configs resetadas! Reinicie o script.", 4)
 end)
+
 local opened = false
 local busy = false
 
@@ -1721,24 +1841,32 @@ end)
 
 close.Activated:Connect(function() playClick(); closeHub() end)
 
+-- DRAG BOTÃO: usa delta absoluto com âncora fixa e clampa em cada frame
 local draggingButton = false
-local dragStart, buttonStart
+local dragStart = nil
+local buttonStart = nil
 
 floating.InputBegan:Connect(function(input)
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
 	draggingButton = true
-	dragStart = input.Position
-	buttonStart = floating.Position
+	dragStart = Vector2.new(input.Position.X, input.Position.Y)
+	buttonStart = Vector2.new(floating.AbsolutePosition.X, floating.AbsolutePosition.Y)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if not draggingButton then return end
 	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
-	local delta = input.Position - dragStart
-	local newX = buttonStart.X.Offset + delta.X
-	local newY = buttonStart.Y.Offset + delta.Y
-	local clamped = clampToViewport(Vector2.new(newX, newY), Vector2.new(BUTTON_SIZE, BUTTON_SIZE))
-	floating.Position = UDim2.new(0, clamped.X, 0, clamped.Y)
+	if not dragStart or not buttonStart then return end
+
+	local current = Vector2.new(input.Position.X, input.Position.Y)
+	local delta = current - dragStart
+	local raw = buttonStart + delta
+	local vp = workspace.CurrentCamera.ViewportSize
+	local clamped = Vector2.new(
+		math.clamp(raw.X, 0, vp.X - BUTTON_SIZE),
+		math.clamp(raw.Y, 0, vp.Y - BUTTON_SIZE)
+	)
+	floating.Position = UDim2.fromOffset(clamped.X, clamped.Y)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
@@ -1751,21 +1879,33 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
+-- DRAG PAINEL
 local draggingPanel = false
-local panelDragStart, panelStart
+local panelDragStart = nil
+local panelStart = nil
 
 header.InputBegan:Connect(function(input)
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
 	draggingPanel = true
-	panelDragStart = input.Position
-	panelStart = panel.Position
+	panelDragStart = Vector2.new(input.Position.X, input.Position.Y)
+	panelStart = Vector2.new(panel.AbsolutePosition.X, panel.AbsolutePosition.Y)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if not draggingPanel then return end
 	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
-	local delta = input.Position - panelDragStart
-	panel.Position = UDim2.new(panelStart.X.Scale, panelStart.X.Offset + delta.X, panelStart.Y.Scale, panelStart.Y.Offset + delta.Y)
+	if not panelDragStart or not panelStart then return end
+
+	local current = Vector2.new(input.Position.X, input.Position.Y)
+	local delta = current - panelDragStart
+	local raw = panelStart + delta
+	local vp = workspace.CurrentCamera.ViewportSize
+	local size = panel.AbsoluteSize
+	local clamped = Vector2.new(
+		math.clamp(raw.X, -size.X + 40, vp.X - 40),
+		math.clamp(raw.Y, 0, vp.Y - 40)
+	)
+	panel.Position = UDim2.fromOffset(clamped.X, clamped.Y)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
@@ -1783,11 +1923,11 @@ task.spawn(function()
 	while gui.Parent do
 		task.wait(0.5)
 		local btnPos = Vector2.new(floating.AbsolutePosition.X, floating.AbsolutePosition.Y)
-		local btnOff = isMostlyOffscreen(btnPos, floating.AbsoluteSize)
+		local btnOff = isMostlyOffscreen(btnPos, floating.AbsoluteSize, 0.85)
 		local panelOff = false
 		if panel.Visible then
 			local panPos = Vector2.new(panel.AbsolutePosition.X, panel.AbsolutePosition.Y)
-			panelOff = isMostlyOffscreen(panPos, panel.AbsoluteSize)
+			panelOff = isMostlyOffscreen(panPos, panel.AbsoluteSize, 0.85)
 		end
 		if (btnOff or panelOff) and not asked then
 			asked = true
@@ -1817,31 +1957,6 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 		SaveConfig.set("hb.enabled",  false)
 		Notify("Panic: features desativadas.", 3)
 		SaveConfig.saveNow()
-	end
-end)
-
-task.spawn(function()
-	while gui.Parent do
-		task.wait(60)
-		pcall(function()
-			game:GetService("VirtualUser"):CaptureController()
-			game:GetService("VirtualUser"):ClickButton2(Vector2.new())
-		end)
-	end
-end)
-task.spawn(function()
-	local bg = SaveConfig.get("ui.bg")
-	if bg then
-		bgImage.Image = "rbxassetid://" .. tostring(bg)
-		bgImage.ImageTransparency = 0.8
-	end
-	local px, py = SaveConfig.get("ui.panX"), SaveConfig.get("ui.panY")
-	if px or py then
-		panel.Position = UDim2.new(0.5, px or 0, 0.5, py or 0)
-	end
-	local bx, by = SaveConfig.get("ui.btnX"), SaveConfig.get("ui.btnY")
-	if bx or by then
-		floating.Position = UDim2.new(0, bx or 14, 0.5, by or -28)
 	end
 end)
 
